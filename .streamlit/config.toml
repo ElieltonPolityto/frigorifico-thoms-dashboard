@@ -1,0 +1,41 @@
+[server]
+enableStaticServing = true
+
+[theme]
+base = "light"
+primaryColor = "#3CAAFB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6FA"
+textColor = "#142B51"
+borderColor = "#D9E3EE"
+dataframeHeaderBackgroundColor = "#EAF4FC"
+font = "Gotham"
+headingFont = "Gotham"
+baseFontSize = 16
+baseFontWeight = 400
+headingFontWeights = [900, 700, 700, 700, 700, 700]
+metricValueFontWeight = 700
+
+[[theme.fontFaces]]
+family = "Gotham"
+url = "app/static/fonts/GothamLight.otf"
+weight = 300
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Gotham"
+url = "app/static/fonts/GothamBook.otf"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Gotham"
+url = "app/static/fonts/GothamBold.otf"
+weight = 700
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Gotham"
+url = "app/static/fonts/GothamBlack.otf"
+weight = 900
+style = "normal"
