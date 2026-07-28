@@ -31,7 +31,7 @@ class HourlyMetricChartTests(unittest.TestCase):
         for cycle in selected_cycles:
             selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
 
-        chart = hourly_metric_chart(selected_cycles, self.data, "Peso", selected_hours)
+        chart = hourly_metric_chart(selected_cycles, self.data, "Espeto", selected_hours)
         spec = chart.to_dict()
 
         self.assertEqual(len(spec["vconcat"]), 2)
@@ -43,6 +43,22 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertTrue(
             all(panel["mark"]["type"] == "bar" for panel in spec["vconcat"])
         )
+
+    def test_weight_loss_uses_lines_and_points_without_bar_offsets(self):
+        selected_cycles = self.cycles[:3]
+        selected_hours = []
+        for cycle in selected_cycles:
+            selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
+
+        chart = hourly_metric_chart(selected_cycles, self.data, "Peso", selected_hours)
+        spec = chart.to_dict()
+
+        for panel in spec["vconcat"]:
+            self.assertEqual(
+                [layer["mark"]["type"] for layer in panel["layer"]],
+                ["line", "point"],
+            )
+            self.assertNotIn("xOffset", str(panel))
 
     def test_continuous_chart_hides_post_target_panel(self):
         selected_cycles = self.cycles[:3]

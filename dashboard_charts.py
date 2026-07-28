@@ -184,29 +184,52 @@ def hourly_metric_chart(
             alt.value(0.48),
             alt.value(0.86),
         )
-        encoding: dict[str, object] = {
+        tooltip = [
+            alt.Tooltip("Ciclo:N", title="Ciclo"),
+            alt.Tooltip("hour_label:N", title="Hora"),
+            alt.Tooltip("value:Q", title=f"Média ({unit})", format=".2f"),
+            alt.Tooltip(
+                "coverage_minutes:Q",
+                title="Cobertura (min)",
+                format=".0f",
+            ),
+            alt.Tooltip("partial:N", title="Hora parcial"),
+        ]
+        bar_encoding: dict[str, object] = {
             "x": x,
             "xOffset": offset,
             "y": y,
             "color": color,
             "opacity": opacity,
-            "tooltip": [
-                alt.Tooltip("Ciclo:N", title="Ciclo"),
-                alt.Tooltip("hour_label:N", title="Hora"),
-                alt.Tooltip("value:Q", title=f"Média ({unit})", format=".2f"),
-                alt.Tooltip(
-                    "coverage_minutes:Q",
-                    title="Cobertura (min)",
-                    format=".0f",
-                ),
-                alt.Tooltip("partial:N", title="Hora parcial"),
-            ],
+            "tooltip": tooltip,
         }
         if metric == "Umidade":
-            encoding["y2"] = alt.datum(92)
-        chart = alt.Chart(phase_data).mark_bar(cornerRadiusTopLeft=2, cornerRadiusTopRight=2).encode(
-            **encoding
-        )
+            bar_encoding["y2"] = alt.datum(92)
+
+        if metric == "Peso":
+            line_encoding = {
+                "x": x,
+                "y": y,
+                "color": color,
+                "detail": "Ciclo:N",
+                "tooltip": tooltip,
+            }
+            lines = (
+                alt.Chart(phase_data)
+                .mark_line(strokeWidth=2.6)
+                .encode(**line_encoding)
+            )
+            points = (
+                alt.Chart(phase_data)
+                .mark_point(size=58, filled=True, strokeWidth=1.2)
+                .encode(**line_encoding, opacity=opacity)
+            )
+            chart = lines + points
+        else:
+            chart = alt.Chart(phase_data).mark_bar(
+                cornerRadiusTopLeft=2,
+                cornerRadiusTopRight=2,
+            ).encode(**bar_encoding)
         panels.append(
             chart.properties(
                 title=phase,
