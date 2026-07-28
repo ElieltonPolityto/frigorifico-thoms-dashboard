@@ -44,21 +44,35 @@ class HourlyMetricChartTests(unittest.TestCase):
             all(panel["mark"]["type"] == "bar" for panel in spec["vconcat"])
         )
 
-    def test_weight_loss_uses_lines_and_points_without_bar_offsets(self):
+    def test_continuous_hourly_metrics_use_lines_and_points_without_bar_offsets(self):
         selected_cycles = self.cycles[:3]
         selected_hours = []
         for cycle in selected_cycles:
             selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
 
-        chart = hourly_metric_chart(selected_cycles, self.data, "Peso", selected_hours)
+        for metric in ("Peso", "DT_ref", "Umidade", "Glicol", "Retorno de ar"):
+            chart = hourly_metric_chart(selected_cycles, self.data, metric, selected_hours)
+            spec = chart.to_dict()
+
+            for panel in spec["vconcat"]:
+                self.assertEqual(
+                    [layer["mark"]["type"] for layer in panel["layer"]],
+                    ["line", "point"],
+                )
+                self.assertNotIn("xOffset", str(panel))
+
+    def test_ventilation_uses_step_lines_with_square_markers(self):
+        selected_cycles = self.cycles[:3]
+        selected_hours = []
+        for cycle in selected_cycles:
+            selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
+
+        chart = hourly_metric_chart(selected_cycles, self.data, "Ventilacao", selected_hours)
         spec = chart.to_dict()
 
         for panel in spec["vconcat"]:
-            self.assertEqual(
-                [layer["mark"]["type"] for layer in panel["layer"]],
-                ["line", "point"],
-            )
-            self.assertNotIn("xOffset", str(panel))
+            self.assertEqual(panel["layer"][0]["mark"]["interpolate"], "step-after")
+            self.assertEqual(panel["layer"][1]["mark"]["shape"], "square")
 
     def test_continuous_chart_hides_post_target_panel(self):
         selected_cycles = self.cycles[:3]

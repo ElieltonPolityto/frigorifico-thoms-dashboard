@@ -418,7 +418,7 @@ def main() -> None:
         st.info("Selecione pelo menos uma variável para exibir as barras horárias.")
     else:
         st.caption(
-            "As barras mostram apenas carregamento e resfriamento até a meta. "
+            "Os gráficos mostram apenas carregamento e resfriamento até a meta. "
             "O período pós-meta permanece disponível no gráfico contínuo e na tabela."
         )
         tabs = st.tabs(
@@ -436,7 +436,7 @@ def main() -> None:
                     width="stretch",
                 )
                 st.caption(
-                    "Barras semitransparentes representam horas parciais com menos de "
+                    "Marcas semitransparentes representam horas parciais com menos de "
                     "45 minutos de cobertura. Os valores exatos estão na tabela abaixo e no tooltip."
                 )
                 st.markdown("##### Valores horários")

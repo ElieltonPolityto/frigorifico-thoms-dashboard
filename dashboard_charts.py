@@ -17,6 +17,8 @@ from thoms_dashboard_data import (
 CYCLE_COLORS = ["#142B51", "#3CAAFB", "#82C9FD"]
 BAR_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
 CONTINUOUS_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
+LINE_METRICS = frozenset({"Peso", "DT_ref", "Umidade", "Glicol", "Retorno de ar"})
+STEP_LINE_METRICS = frozenset({"Ventilacao"})
 PHASE_BACKGROUNDS = {
     PHASE_LOADING: "#E5F3FD",
     PHASE_TO_TARGET: "#F5F8FC",
@@ -125,7 +127,7 @@ def hourly_metric_chart(
     metric: str,
     selected_hours: list[str],
 ) -> alt.TopLevelMixin:
-    """Build readable grouped bars for loading and cooling-to-target only."""
+    """Render hourly phase comparisons with a form appropriate to each metric."""
     rows: list[pd.DataFrame] = []
     unit = ""
     for index, cycle in enumerate(selected_cycles):
@@ -206,7 +208,7 @@ def hourly_metric_chart(
         if metric == "Umidade":
             bar_encoding["y2"] = alt.datum(92)
 
-        if metric == "Peso":
+        if metric in LINE_METRICS or metric in STEP_LINE_METRICS:
             line_encoding = {
                 "x": x,
                 "y": y,
@@ -214,14 +216,21 @@ def hourly_metric_chart(
                 "detail": "Ciclo:N",
                 "tooltip": tooltip,
             }
+            line_mark = alt.Chart(phase_data).mark_line(
+                strokeWidth=2.6,
+                interpolate="step-after" if metric in STEP_LINE_METRICS else "linear",
+            )
             lines = (
-                alt.Chart(phase_data)
-                .mark_line(strokeWidth=2.6)
-                .encode(**line_encoding)
+                line_mark.encode(**line_encoding)
             )
             points = (
                 alt.Chart(phase_data)
-                .mark_point(size=58, filled=True, strokeWidth=1.2)
+                .mark_point(
+                    size=58,
+                    filled=True,
+                    shape="square" if metric in STEP_LINE_METRICS else "circle",
+                    strokeWidth=1.2,
+                )
                 .encode(**line_encoding, opacity=opacity)
             )
             chart = lines + points
