@@ -10,4 +10,4 @@ Painel Streamlit para comparação de ciclos de resfriamento a partir dos CSVs d
 
 ## Streamlit Community Cloud
 
-O painel carrega automaticamente os CSVs versionados em `dados_entrada`. Mantenha o repositório privado para que os dados operacionais não fiquem acessíveis pelo GitHub. Configure o arquivo principal como `app.py`; as dependências já estão em `requirements.txt`.
+O painel carrega automaticamente os CSVs versionados em `dados_entrada`. Configure o arquivo principal como `app.py`; as dependências já estão em `requirements.txt`.

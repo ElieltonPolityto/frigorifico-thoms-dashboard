@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 import altair as alt
 import pandas as pd
@@ -22,8 +18,6 @@ from thoms_dashboard_data import (
 
 
 DATA_FOLDER = Path(__file__).parent / "dados_entrada"
-PRIVATE_DATA_REPOSITORY = "ElieltonPolityto/resfriamento-carcacas-app"
-PRIVATE_DATA_BRANCH = "streamlit/thoms-dashboard"
 BRAND_LOGO = Path(__file__).parent / "static" / "brand" / "plotter-racks-logo-blue.png"
 COLORS = ["#142B51", "#3CAAFB", "#82C9FD"]
 METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol", "Retorno de ar"]
@@ -52,41 +46,6 @@ def load_dashboard_data(folder: str, folder_mtime: float) -> pd.DataFrame:
     """Cache deterministic file reads while invalidating when a CSV changes."""
     del folder_mtime
     return load_supervision_data(Path(folder))
-
-
-@st.cache_data(show_spinner="Carregando a base de supervisão...")
-def load_private_repository_data() -> pd.DataFrame:
-    """Read CSVs server-side from the private data repository on Streamlit Cloud."""
-    token = st.secrets.get("GITHUB_DATA_TOKEN", "")
-    if not token:
-        raise FileNotFoundError("A base privada não foi configurada no Streamlit Cloud.")
-
-    headers = {
-        "Accept": "application/vnd.github.raw+json",
-        "Authorization": f"Bearer {token}",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    listing_url = (
-        f"https://api.github.com/repos/{PRIVATE_DATA_REPOSITORY}/contents/dados_entrada"
-        f"?ref={PRIVATE_DATA_BRANCH}"
-    )
-    try:
-        with urlopen(Request(listing_url, headers=headers), timeout=30) as response:
-            entries = json.load(response)
-    except (HTTPError, URLError, json.JSONDecodeError) as error:
-        raise FileNotFoundError("Não foi possível carregar a base privada de supervisão.") from error
-
-    csv_entries = [entry for entry in entries if entry.get("name", "").lower().endswith(".csv")]
-    if not csv_entries:
-        raise FileNotFoundError("Nenhum CSV foi encontrado na base privada de supervisão.")
-
-    with TemporaryDirectory(prefix="thoms_supervisao_") as temporary_folder:
-        folder = Path(temporary_folder)
-        for entry in csv_entries:
-            request = Request(entry["url"], headers=headers)
-            with urlopen(request, timeout=30) as response:
-                (folder / entry["name"]).write_bytes(response.read())
-        return load_supervision_data(folder)
 
 
 def folder_last_modified(folder: Path) -> float:
@@ -328,10 +287,7 @@ def main() -> None:
     )
 
     try:
-        if list(DATA_FOLDER.glob("*.csv")):
-            data = load_dashboard_data(str(DATA_FOLDER), folder_last_modified(DATA_FOLDER))
-        else:
-            data = load_private_repository_data()
+        data = load_dashboard_data(str(DATA_FOLDER), folder_last_modified(DATA_FOLDER))
         cycles = detect_valid_cycles(data)
     except (FileNotFoundError, ValueError) as error:
         st.error(str(error))
