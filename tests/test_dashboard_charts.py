@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from dashboard_charts import hourly_metric_chart
+from dashboard_charts import continuous_phase_chart, hourly_metric_chart
 from thoms_dashboard_data import (
     PHASE_LOADING,
     PHASE_POST_TARGET,
@@ -43,6 +43,22 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertTrue(
             all(panel["mark"]["type"] == "bar" for panel in spec["vconcat"])
         )
+
+    def test_continuous_chart_hides_post_target_panel(self):
+        selected_cycles = self.cycles[:3]
+        selected_hours = []
+        for cycle in selected_cycles:
+            selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
+
+        chart = continuous_phase_chart(selected_cycles, self.data, "Espeto", selected_hours)
+        spec = chart.to_dict()
+
+        self.assertEqual(len(spec["vconcat"]), 2)
+        self.assertEqual(
+            [panel["title"] for panel in spec["vconcat"]],
+            [PHASE_LOADING, PHASE_TO_TARGET],
+        )
+        self.assertNotIn(PHASE_POST_TARGET, str(spec))
 
 
 if __name__ == "__main__":

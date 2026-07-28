@@ -7,8 +7,6 @@ import pandas as pd
 
 from thoms_dashboard_data import (
     PHASE_LOADING,
-    PHASE_ORDER,
-    PHASE_POST_TARGET,
     PHASE_TO_TARGET,
     Cycle,
     cycle_frame,
@@ -18,10 +16,10 @@ from thoms_dashboard_data import (
 
 CYCLE_COLORS = ["#142B51", "#3CAAFB", "#82C9FD"]
 BAR_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
+CONTINUOUS_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
 PHASE_BACKGROUNDS = {
     PHASE_LOADING: "#E5F3FD",
     PHASE_TO_TARGET: "#F5F8FC",
-    PHASE_POST_TARGET: "#EAF0F7",
 }
 
 
@@ -60,7 +58,7 @@ def continuous_phase_chart(
     cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
     panels: list[alt.Chart] = []
 
-    for phase in PHASE_ORDER:
+    for phase in CONTINUOUS_PHASE_ORDER:
         phase_data = chart_data[chart_data["phase"].eq(phase)].copy()
         if phase_data.empty:
             continue
@@ -100,7 +98,7 @@ def continuous_phase_chart(
             title=phase,
             height=190,
         )
-        if metric == "Espeto" and phase in (PHASE_TO_TARGET, PHASE_POST_TARGET):
+        if metric == "Espeto" and phase == PHASE_TO_TARGET:
             target = alt.Chart(pd.DataFrame({"meta": [7.0]})).mark_rule(
                 color="#E4572E",
                 strokeDash=[6, 4],
