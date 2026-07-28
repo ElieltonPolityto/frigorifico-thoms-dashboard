@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from dashboard_charts import (
+    CYCLE_COLORS,
+    continuous_phase_chart,
+    hourly_metric_chart,
+)
+from dashboard_pdf import build_dashboard_pdf
 from thoms_dashboard_data import (
+    PHASE_ORDER,
     cycle_frame,
     cycle_metrics,
     detect_valid_cycles,
+    hourly_phase_summary,
     load_supervision_data,
+    rank_cycles,
+    selection_insights,
 )
 
 
 DATA_FOLDER = Path(__file__).parent / "dados_entrada"
 BRAND_LOGO = Path(__file__).parent / "static" / "brand" / "plotter-racks-logo-blue.png"
-COLORS = ["#142B51", "#3CAAFB", "#82C9FD"]
+COLORS = CYCLE_COLORS
 METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol", "Retorno de ar"]
 PDF_BAR_DEFAULTS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao"]
 DISPLAY_METRIC_NAMES = {"Umidade": "Umidade Relativa"}
@@ -35,6 +45,15 @@ st.markdown(
       .plotter-header { border-bottom: 3px solid #3CAAFB; padding: 0.15rem 0 1rem; margin-bottom: 1rem; }
       .plotter-header h1 { color: #142B51; margin: 0; font-weight: 900; }
       .plotter-header p { color: #5D6C7B; margin: 0.3rem 0 0; }
+      .thoms-table-wrap { width: 100%; overflow-x: auto; margin: .4rem 0 1rem; }
+      table.thoms-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; table-layout: auto; }
+      table.thoms-table th { background: #142B51; color: white; font-weight: 700; white-space: nowrap; }
+      table.thoms-table th, table.thoms-table td { padding: .55rem .75rem; border-right: 1px solid #D9E3EE; border-bottom: 1px solid #D9E3EE; white-space: nowrap; text-align: left; }
+      table.thoms-table td:first-child, table.thoms-table th:first-child { border-left: 1px solid #D9E3EE; }
+      table.thoms-table tr:nth-child(even) td { background: #F7F9FC; }
+      table.thoms-table td.period-cell { min-width: 310px; }
+      .thoms-insight { border-left: 4px solid #3CAAFB; background: #F3F8FC; padding: .6rem .8rem; margin: .35rem 0; }
+      .thoms-note { color: #5D6C7B; font-size: .86rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -138,22 +157,81 @@ def enable_sidebar_autohide(timeout_seconds: int = 15) -> None:
     )
 
 
+def render_html_table(frame: pd.DataFrame, period_column: str | None = None) -> None:
+    """Render a content-sized table with horizontal overflow when needed."""
+    headers = "".join(f"<th>{escape(str(column))}</th>" for column in frame.columns)
+    body_rows = []
+    for _, row in frame.iterrows():
+        cells = []
+        for column in frame.columns:
+            css_class = "period-cell" if column == period_column else ""
+            value = "—" if pd.isna(row[column]) else str(row[column])
+            cells.append(
+                f'<td class="{css_class}">{escape(value)}</td>'
+            )
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    st.markdown(
+        '<div class="thoms-table-wrap"><table class="thoms-table">'
+        f"<thead><tr>{headers}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def phase_strip(selected_cycles, data: pd.DataFrame) -> None:
-    """Show loading and cooling without adding negative hours to the chart axis."""
-    st.caption("Fases: C0, C1... = carregamento | H0, H1... = resfriamento")
+    """Show the three real phase durations for each selected cycle."""
+    st.caption(
+        "C = carregamento | R = resfriamento até 7 °C | "
+        "P = resfriamento pós-meta"
+    )
     for index, cycle in enumerate(selected_cycles):
         metrics = cycle_metrics(data, cycle)
-        loading = metrics["Duracao carga"]
-        cooling = metrics["Duracao resfriamento"]
-        total = loading + cooling
-        loading_width = loading / total * 100
+        loading = float(metrics["Duracao carga"])
+        to_target = float(metrics["Duracao ate meta"])
+        post_target = metrics["Duracao pos meta"]
+        post_value = float(post_target) if isinstance(post_target, (int, float)) else 0.0
+        total = max(loading + to_target + post_value, 0.01)
+        segments = [
+            (
+                loading / total * 100,
+                "#CFEAFB",
+                "#142B51",
+                f"C {loading:.1f} h",
+            ),
+            (
+                to_target / total * 100,
+                "#3CAAFB",
+                "white",
+                (
+                    f"R {to_target:.1f} h"
+                    if post_target is not None
+                    else f"R {to_target:.1f} h · meta não atingida"
+                ),
+            ),
+        ]
+        if post_target is not None:
+            segments.append(
+                (
+                    post_value / total * 100,
+                    "#142B51",
+                    "white",
+                    f"P {post_value:.1f} h",
+                )
+            )
+        segment_html = "".join(
+            (
+                f'<div style="width:{width:.2f}%;background:{background};'
+                f"color:{foreground};padding:4px 7px;font-size:12px;"
+                f'min-width:72px;white-space:nowrap;">{escape(label)}</div>'
+            )
+            for width, background, foreground, label in segments
+        )
         st.markdown(
             f"""
             <div style="display:flex;align-items:center;gap:10px;margin:5px 0 10px 0;">
-              <span style="min-width:180px;color:{COLORS[index]};font-weight:600;">Ciclo {index + 1}</span>
-              <div style="display:flex;flex:1;height:25px;border-radius:5px;overflow:hidden;background:#f3f4f6;">
-                <div style="width:{loading_width:.2f}%;background:#9ca3af;color:white;padding:3px 8px;font-size:12px;white-space:nowrap;">Carga {loading:.1f} h</div>
-                <div style="flex:1;background:{COLORS[index]};color:white;padding:3px 8px;font-size:12px;white-space:nowrap;">Resfriamento {cooling:.1f} h</div>
+              <span style="min-width:90px;color:{COLORS[index]};font-weight:700;">Ciclo {index + 1}</span>
+              <div style="display:flex;flex:1;height:28px;border-radius:5px;overflow:hidden;background:#F3F6FA;">
+                {segment_html}
               </div>
             </div>
             """,
@@ -161,117 +239,115 @@ def phase_strip(selected_cycles, data: pd.DataFrame) -> None:
         )
 
 
-def render_cycle_summary_table(selected_cycles, data: pd.DataFrame) -> None:
-    """Render one compact comparison table instead of repeated metric cards."""
+def cycle_summary_frame(selected_cycles, data: pd.DataFrame) -> pd.DataFrame:
+    """Build the reconciled summary table used by the app and PDF."""
     def formatted(value, suffix: str, decimals: int = 1) -> str:
         return "—" if value is None or pd.isna(value) else f"{value:.{decimals}f} {suffix}"
 
     rows = []
     for index, cycle in enumerate(selected_cycles):
         metrics = cycle_metrics(data, cycle)
+        time_to_target = metrics["Tempo ate 7 C"]
         rows.append(
             {
                 "Ciclo": f"Ciclo {index + 1}",
                 "Período": cycle.label,
-                "Carga": formatted(metrics["Duracao carga"], "h"),
-                "Resfriamento": formatted(metrics["Duracao resfriamento"], "h"),
+                "C": formatted(metrics["Duracao carga"], "h"),
+                "R": formatted(metrics["Duracao ate meta"], "h"),
+                "P": formatted(metrics["Duracao pos meta"], "h"),
                 "Peso inicial": formatted(metrics["Peso inicial"], "kg"),
                 "Peso aos 7 °C": formatted(metrics["Peso final"], "kg"),
                 "Perda até 7 °C": formatted(metrics["Perda"], "%", decimals=2),
                 "Espeto inicial": formatted(metrics["Espeto inicial"], "°C"),
-                "Até 7 °C": format_hours(metrics["Tempo ate 7 C"]) if metrics["Tempo ate 7 C"] is not None else "—",
+                "Até 7 °C": (
+                    format_hours(time_to_target)
+                    if isinstance(time_to_target, (int, float))
+                    else "Meta não atingida"
+                ),
                 "DT_ref médio": formatted(metrics["DT_ref medio"], "°C"),
             }
         )
+    return pd.DataFrame(rows)
 
+
+def render_cycle_summary_table(selected_cycles, data: pd.DataFrame) -> None:
     st.subheader("Resumo dos ciclos selecionados")
-    st.dataframe(
-        pd.DataFrame(rows),
-        column_config={
-            "Ciclo": st.column_config.TextColumn(width="small"),
-            "Período": st.column_config.TextColumn(width="medium"),
-            "Carga": st.column_config.TextColumn(width="small"),
-            "Resfriamento": st.column_config.TextColumn(width="small"),
-            "Peso inicial": st.column_config.TextColumn(width="small"),
-            "Peso aos 7 °C": st.column_config.TextColumn(width="small"),
-            "Perda até 7 °C": st.column_config.TextColumn(width="small"),
-            "Espeto inicial": st.column_config.TextColumn(width="small"),
-            "Até 7 °C": st.column_config.TextColumn(width="small"),
-            "DT_ref médio": st.column_config.TextColumn(width="small"),
-        },
-        hide_index=True,
-        width="stretch",
-        height=35 * (len(rows) + 1) + 4,
+    render_html_table(
+        cycle_summary_frame(selected_cycles, data),
+        period_column="Período",
     )
 
 
 def ordered_hour_labels(selected_cycles, data: pd.DataFrame) -> list[str]:
-    """Return a common C0...Hn timeline for the selected cycles."""
-    labels: set[str] = set()
+    """Return a common C...R...P phase-hour sequence."""
+    ordering: dict[str, tuple[int, int]] = {}
     for cycle in selected_cycles:
-        labels.update(cycle_frame(data, cycle, "Espeto")["hour_label"].unique())
-    return sorted(labels, key=lambda label: (0 if label.startswith("C") else 1, int(label[1:])))
+        frame = cycle_frame(data, cycle, "Espeto")
+        for row in frame[["phase", "phase_hour", "hour_label"]].drop_duplicates().itertuples():
+            ordering[row.hour_label] = (PHASE_ORDER.index(row.phase), int(row.phase_hour))
+    return sorted(ordering, key=ordering.get)
 
 
-def hourly_chart(
-    selected_cycles, data: pd.DataFrame, metric: str, selected_hours: list[str]
-) -> alt.Chart:
-    """Create one labelled hourly bar panel, styled after the PDF reference."""
-    rows: list[pd.DataFrame] = []
-    unit = ""
-    hour_order = selected_hours
-
+def explanatory_table_frame(
+    selected_cycles,
+    data: pd.DataFrame,
+    metric: str,
+    selected_hours: list[str],
+) -> pd.DataFrame:
+    """Pivot the chart values into a readable cycle-comparison table."""
+    rows: dict[tuple[str, int, str], dict[str, str]] = {}
     for index, cycle in enumerate(selected_cycles):
-        frame = cycle_frame(data, cycle, metric)
-        unit = frame["unit"].iloc[0]
-        frame = frame[frame["hour_label"].isin(selected_hours)]
-        if frame.empty:
-            continue
-        hourly = (
-            frame.groupby("hour_label", sort=False)["value"]
-            .mean()
-            .reset_index()
-            .rename(columns={"hour_label": "Hora", "value": "Valor"})
-        )
-        hourly["Ciclo"] = f"Ciclo {index + 1}"
-        rows.append(hourly)
+        hourly = hourly_phase_summary(data, cycle, metric)
+        hourly = hourly[hourly["hour_label"].isin(selected_hours)]
+        for record in hourly.to_dict("records"):
+            key = (
+                str(record["phase"]),
+                int(record["phase_hour"]),
+                str(record["hour_label"]),
+            )
+            row = rows.setdefault(
+                key,
+                {
+                    "Fase": str(record["phase"]),
+                    "Hora": str(record["hour_label"]),
+                },
+            )
+            partial = " · parcial" if bool(record["partial"]) else ""
+            row[f"Ciclo {index + 1}"] = (
+                f'{float(record["value"]):.2f} {record["unit"]} · '
+                f'{float(record["coverage_minutes"]):.0f} min{partial}'
+            )
 
-    chart_data = pd.concat(rows, ignore_index=True)
-    if metric == "Umidade":
-        chart_data = chart_data[chart_data["Valor"] >= 92].copy()
-    cycle_domain = [f"Ciclo {index + 1}" for index in range(len(selected_cycles))]
-    x = alt.X("Hora:O", sort=hour_order, title=None, axis=alt.Axis(labelAngle=0, labelPadding=7))
-    y_scale = alt.Scale(domain=[92, 100], zero=False) if metric == "Umidade" else alt.Scale(zero=True)
-    y = alt.Y("Valor:Q", title=f"Média ({unit})", scale=y_scale)
-    show_value_labels = len(selected_cycles) == 1
-    color = alt.Color(
-        "Ciclo:N",
-        scale=alt.Scale(domain=cycle_domain, range=COLORS[: len(selected_cycles)]),
-        legend=None if show_value_labels else alt.Legend(orient="top", title=None),
+    ordered = sorted(
+        rows.items(),
+        key=lambda item: (
+            PHASE_ORDER.index(item[0][0]),
+            item[0][1],
+        ),
     )
-    offset = alt.XOffset("Ciclo:N", sort=cycle_domain)
+    columns = ["Fase", "Hora"] + [
+        f"Ciclo {index + 1}" for index in range(len(selected_cycles))
+    ]
+    return pd.DataFrame([row for _, row in ordered], columns=columns).fillna("—")
 
-    bar_encoding = {
-        "x": x,
-        "xOffset": offset,
-        "y": y,
-        "color": color,
-        "tooltip": [
-            alt.Tooltip("Ciclo:N", title="Ciclo"),
-            alt.Tooltip("Hora:O", title="Hora"),
-            alt.Tooltip("Valor:Q", title=f"Média ({unit})", format=".1f"),
-        ],
-    }
-    if metric == "Umidade":
-        # A barra deve nascer no limite operacional de 92%, não no zero oculto.
-        bar_encoding["y2"] = alt.datum(92)
-    bars = alt.Chart(chart_data).mark_bar(opacity=0.82).encode(**bar_encoding)
-    labels = alt.Chart(chart_data).mark_text(
-        dy=-8, font="Gotham", fontSize=14, fontWeight="bold", color="#263238"
-    ).encode(x=x, xOffset=offset, y=y, text=alt.Text("Valor:Q", format=".1f"), detail="Ciclo:N")
-    display_metric = DISPLAY_METRIC_NAMES.get(metric, metric)
-    chart = bars + labels if show_value_labels else bars
-    return chart.properties(title=f"{display_metric} - média por hora", height=245)
+
+def render_selection_reading(
+    selected_cycles,
+    data: pd.DataFrame,
+    ranking: pd.DataFrame,
+) -> list[str]:
+    insights = selection_insights(data, selected_cycles, ranking)
+    st.subheader("Leitura da seleção")
+    for insight in insights:
+        st.markdown(
+            f'<div class="thoms-insight">{escape(insight)}</div>',
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "Síntese descritiva dos dados observados. Não estabelece relação causal "
+        "entre as variáveis de processo e o resultado."
+    )
+    return insights
 
 
 def main() -> None:
@@ -289,16 +365,23 @@ def main() -> None:
     try:
         data = load_dashboard_data(str(DATA_FOLDER), folder_last_modified(DATA_FOLDER))
         cycles = detect_valid_cycles(data)
+        ranking = rank_cycles(data, cycles)
     except (FileNotFoundError, ValueError) as error:
         st.error(str(error))
         return
 
+    suggested_labels = ranking.head(3)["label"].tolist()
     st.sidebar.header("Seleção")
     selected_labels = st.sidebar.multiselect(
         "Escolha até três ciclos",
         options=[cycle.label for cycle in cycles],
+        default=suggested_labels,
         max_selections=3,
-        placeholder="Nenhum ciclo selecionado",
+        placeholder="Selecione um ciclo",
+        help=(
+            "A seleção inicial sugere os três melhores equilíbrios entre tempo "
+            "até 7 °C e perda de peso, com ponderação de 50% para cada indicador."
+        ),
     )
     selected_bar_metrics = st.sidebar.multiselect(
         "Variáveis nas barras horárias",
@@ -312,6 +395,10 @@ def main() -> None:
         index=0,
     )
     st.sidebar.caption(f"{len(cycles)} ciclos válidos encontrados nos CSVs disponíveis.")
+    st.sidebar.caption(
+        f"{len(ranking)} ciclos elegíveis para o ranking; perdas negativas e "
+        "ciclos sem meta ficam fora da sugestão automática."
+    )
 
     if not selected_labels:
         st.info("Selecione um, dois ou três ciclos na barra lateral para iniciar a comparação.")
@@ -319,57 +406,114 @@ def main() -> None:
 
     cycle_by_label = {cycle.label: cycle for cycle in cycles}
     selected_cycles = [cycle_by_label[label] for label in selected_labels]
+    render_selection_reading(selected_cycles, data, ranking)
     render_cycle_summary_table(selected_cycles, data)
+    phase_strip(selected_cycles, data)
 
     hour_options = ordered_hour_labels(selected_cycles, data)
     selected_time_window = st.select_slider(
-        "Janela de análise por hora do ciclo",
+        "Janela de análise por hora da fase",
         options=hour_options,
         value=(hour_options[0], hour_options[-1]),
-        help="Exemplo: escolha C0 até H7 para mostrar apenas esse trecho em todos os gráficos.",
+        help=(
+            "C = carregamento, R = resfriamento até 7 °C e "
+            "P = resfriamento pós-meta."
+        ),
     )
     start_hour, end_hour = selected_time_window
     selected_hours = hour_options[hour_options.index(start_hour) : hour_options.index(end_hour) + 1]
     st.divider()
     st.subheader(f"{main_metric} ao longo do ciclo")
-    phase_strip(selected_cycles, data)
-
-    line_series = []
-    unit = ""
-    for index, cycle in enumerate(selected_cycles):
-        frame = cycle_frame(data, cycle, main_metric)
-        unit = frame["unit"].iloc[0]
-        frame = frame[frame["hour_label"].isin(selected_hours)]
-        name = f"Ciclo {index + 1}"
-        line_series.append(frame[["hours_from_cycle_start", "value"]].rename(columns={"value": name}))
-
-    line_data = line_series[0]
-    for series in line_series[1:]:
-        line_data = line_data.merge(series, on="hours_from_cycle_start", how="outer")
-    line_data = line_data.sort_values("hours_from_cycle_start")
-    st.line_chart(
-        line_data,
-        x="hours_from_cycle_start",
-        y=[f"Ciclo {index + 1}" for index in range(len(selected_cycles))],
-        color=COLORS[: len(selected_cycles)],
-        x_label="Horas desde o início do carregamento",
-        y_label=unit,
-        height=360,
+    st.altair_chart(
+        continuous_phase_chart(
+            selected_cycles,
+            data,
+            main_metric,
+            selected_hours,
+        ),
+        width="stretch",
     )
 
     st.subheader("Médias horárias por variável")
     if not selected_bar_metrics:
         st.info("Selecione pelo menos uma variável para exibir as barras horárias.")
-    if selected_bar_metrics:
-        charts = [hourly_chart(selected_cycles, data, metric, selected_hours) for metric in selected_bar_metrics]
-        bar_dashboard = (
-            alt.vconcat(*charts)
-            .resolve_scale(x="shared")
-            .configure_axis(labelFont="Gotham", titleFont="Gotham")
-            .configure_title(font="Gotham")
+    for metric in selected_bar_metrics:
+        display_metric = DISPLAY_METRIC_NAMES.get(metric, metric)
+        st.markdown(f"#### {display_metric}")
+        st.altair_chart(
+            hourly_metric_chart(
+                selected_cycles,
+                data,
+                metric,
+                selected_hours,
+            ),
+            width="stretch",
         )
-        st.altair_chart(bar_dashboard, width="stretch")
-    st.caption("C0, C1... representam carregamento; H0, H1... representam resfriamento.")
+    st.caption(
+        "Barras semitransparentes representam horas parciais com menos de "
+        "45 minutos de cobertura."
+    )
+
+    if selected_bar_metrics:
+        st.subheader("Tabela explicativa dos dados")
+        tabs = st.tabs(
+            [DISPLAY_METRIC_NAMES.get(metric, metric) for metric in selected_bar_metrics]
+        )
+        for tab, metric in zip(tabs, selected_bar_metrics):
+            with tab:
+                render_html_table(
+                    explanatory_table_frame(
+                        selected_cycles,
+                        data,
+                        metric,
+                        selected_hours,
+                    )
+                )
+                st.caption(
+                    "Cada célula mostra a média horária, a unidade e a cobertura "
+                    "observada. Horas com menos de 45 minutos são marcadas como parciais."
+                )
+
+    report_signature = (
+        tuple(selected_labels),
+        tuple(selected_bar_metrics),
+        main_metric,
+        tuple(selected_hours),
+    )
+    st.divider()
+    st.subheader("Relatório da seleção")
+    if st.button("Preparar relatório PDF", type="primary"):
+        with st.spinner("Gerando gráficos, tabelas e relatório..."):
+            try:
+                st.session_state["thoms_pdf"] = build_dashboard_pdf(
+                    selected_cycles=selected_cycles,
+                    data=data,
+                    ranking=ranking,
+                    main_metric=main_metric,
+                    bar_metrics=selected_bar_metrics,
+                    selected_hours=selected_hours,
+                    logo_path=BRAND_LOGO,
+                )
+                st.session_state["thoms_pdf_signature"] = report_signature
+            except Exception as error:
+                st.session_state.pop("thoms_pdf", None)
+                st.session_state.pop("thoms_pdf_signature", None)
+                st.error(f"Não foi possível gerar o PDF: {error}")
+
+    if (
+        st.session_state.get("thoms_pdf")
+        and st.session_state.get("thoms_pdf_signature") == report_signature
+    ):
+        st.download_button(
+            "Baixar relatório PDF",
+            data=st.session_state["thoms_pdf"],
+            file_name="relatorio_selecao_ciclos_thoms.pdf",
+            mime="application/pdf",
+        )
+        st.caption(
+            "O arquivo reproduz os ciclos, a janela de horas e as variáveis "
+            "selecionadas neste momento."
+        )
 
 
 

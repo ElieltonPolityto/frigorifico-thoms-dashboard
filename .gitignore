@@ -1,5 +1,10 @@
 __pycache__/
 *.py[cod]
+.venv/
 .streamlit/secrets.toml
 logs/
 context/exemplo.pdf
+output/pdf/*.pdf
+output/playwright/
+tmp/pdfs/
+.playwright-cli/

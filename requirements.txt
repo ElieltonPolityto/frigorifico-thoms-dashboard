@@ -2,3 +2,6 @@ streamlit==1.60.0
 altair==6.2.2
 pandas>=2.0,<3
 numpy>=1.26,<3
+Pillow>=10,<13
+reportlab>=4.2,<5
+vl-convert-python>=1.8,<2

@@ -25,6 +25,17 @@ MIN_VALID_WEIGHT_KG = 90
 MAX_WEIGHT_AT_TARGET_DELAY_MINUTES = 5
 OPERATIONAL_CYCLE_CUTOFF_HOUR = 11
 WEEKDAY_ABBREVIATIONS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
+TARGET_ESPETO_C = 7.0
+PARTIAL_HOUR_MINUTES = 45.0
+PHASE_LOADING = "Carregamento"
+PHASE_TO_TARGET = "Resfriamento até a meta"
+PHASE_POST_TARGET = "Resfriamento pós-meta"
+PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET, PHASE_POST_TARGET)
+PHASE_PREFIX = {
+    PHASE_LOADING: "C",
+    PHASE_TO_TARGET: "R",
+    PHASE_POST_TARGET: "P",
+}
 
 
 @dataclass(frozen=True)
@@ -40,7 +51,10 @@ class Cycle:
 def _first_time_at_or_below_7(frame: pd.DataFrame, cooling_start: pd.Timestamp) -> pd.Timestamp | None:
     """Return the first espeto sample at or below 7 C during cooling."""
     espeto = frame[REQUIRED_COLUMNS["Espeto"]]
-    reached = frame.loc[(frame["timestamp"] >= cooling_start) & (espeto <= 7), "timestamp"]
+    reached = frame.loc[
+        (frame["timestamp"] >= cooling_start) & (espeto <= TARGET_ESPETO_C),
+        "timestamp",
+    ]
     return None if reached.empty else reached.iloc[0]
 
 
@@ -221,13 +235,28 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
     frame = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
     start_time = frame["timestamp"].iloc[0]
     cooling_time = data.at[cycle.cooling_index, "timestamp"]
+    reached_7_time = _first_time_at_or_below_7(frame, cooling_time)
     frame["hours_from_cycle_start"] = (
         frame["timestamp"] - start_time
     ).dt.total_seconds() / 3600
-    frame["phase"] = np.where(frame["timestamp"] < cooling_time, "Carregamento", "Resfriamento")
-    phase_start = np.where(frame["phase"].eq("Carregamento"), start_time, cooling_time)
-    phase_hour = np.floor((frame["timestamp"] - pd.to_datetime(phase_start)).dt.total_seconds() / 3600).astype(int)
-    frame["hour_label"] = np.where(frame["phase"].eq("Carregamento"), "C", "H") + phase_hour.astype(str)
+    frame["phase"] = PHASE_TO_TARGET
+    frame.loc[frame["timestamp"] < cooling_time, "phase"] = PHASE_LOADING
+    if reached_7_time is not None:
+        frame.loc[frame["timestamp"] >= reached_7_time, "phase"] = PHASE_POST_TARGET
+
+    phase_starts = {
+        PHASE_LOADING: start_time,
+        PHASE_TO_TARGET: cooling_time,
+        PHASE_POST_TARGET: reached_7_time,
+    }
+    frame["phase_start"] = frame["phase"].map(phase_starts)
+    frame["hours_from_phase_start"] = (
+        frame["timestamp"] - pd.to_datetime(frame["phase_start"])
+    ).dt.total_seconds() / 3600
+    frame["phase_hour"] = np.floor(frame["hours_from_phase_start"]).astype(int)
+    frame["hour_label"] = (
+        frame["phase"].map(PHASE_PREFIX) + frame["phase_hour"].astype(str)
+    )
 
     if metric == "Peso":
         valid_weight = _initial_loaded_weight(frame)
@@ -235,7 +264,6 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
         initial_weight = initial_weight_series.iloc[0]
         initial_time = initial_weight_series.index[0]
         valid_weight = valid_weight.where(frame.index >= initial_time)
-        reached_7_time = _first_time_at_or_below_7(frame, cooling_time)
         if reached_7_time is not None:
             valid_weight = valid_weight.where(frame["timestamp"] <= reached_7_time)
         frame["value"] = (initial_weight - valid_weight) / initial_weight * 100
@@ -254,6 +282,61 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
     return frame
 
 
+def hourly_phase_summary(
+    data: pd.DataFrame,
+    cycle: Cycle,
+    metric: str,
+) -> pd.DataFrame:
+    """Aggregate one metric by phase-relative hour with observed coverage."""
+    frame = cycle_frame(data, cycle, metric).dropna(subset=["value"]).copy()
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "phase",
+                "phase_order",
+                "phase_hour",
+                "hour_label",
+                "value",
+                "coverage_minutes",
+                "partial",
+                "unit",
+            ]
+        )
+
+    cadence = frame["timestamp"].diff().dropna().median()
+    cadence_minutes = (
+        cadence.total_seconds() / 60
+        if pd.notna(cadence) and cadence > pd.Timedelta(0)
+        else 1.0
+    )
+
+    rows: list[dict[str, object]] = []
+    grouped = frame.groupby(["phase", "phase_hour", "hour_label"], sort=False)
+    for (phase, phase_hour, hour_label), group in grouped:
+        observed_span = (
+            group["timestamp"].max() - group["timestamp"].min()
+        ).total_seconds() / 60
+        coverage_minutes = min(60.0, observed_span + cadence_minutes)
+        rows.append(
+            {
+                "phase": phase,
+                "phase_order": PHASE_ORDER.index(phase),
+                "phase_hour": int(phase_hour),
+                "hour_label": hour_label,
+                "value": float(group["value"].mean()),
+                "coverage_minutes": coverage_minutes,
+                "partial": coverage_minutes < PARTIAL_HOUR_MINUTES,
+                "unit": str(group["unit"].iloc[0]),
+            }
+        )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["phase_order", "phase_hour"])
+        .reset_index(drop=True)
+    )
+
+
 def cycle_metrics(data: pd.DataFrame, cycle: Cycle) -> dict[str, float | str]:
     """Calculate the KPI cards using the agreed cycle boundaries."""
     frame = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
@@ -267,9 +350,24 @@ def cycle_metrics(data: pd.DataFrame, cycle: Cycle) -> dict[str, float | str]:
     final_weight = None
     if reached_7_time is not None:
         final_weight = _weight_at_7_c(frame, reached_7_time)
+    cooling_duration = (
+        frame["timestamp"].iloc[-1] - cooling_start
+    ).total_seconds() / 3600
+    cooling_to_target_duration = (
+        (reached_7_time - cooling_start).total_seconds() / 3600
+        if reached_7_time is not None
+        else cooling_duration
+    )
+    post_target_duration = (
+        (frame["timestamp"].iloc[-1] - reached_7_time).total_seconds() / 3600
+        if reached_7_time is not None
+        else None
+    )
     return {
         "Duracao carga": (cooling_start - frame["timestamp"].iloc[0]).total_seconds() / 3600,
-        "Duracao resfriamento": (frame["timestamp"].iloc[-1] - cooling_start).total_seconds() / 3600,
+        "Duracao resfriamento": cooling_duration,
+        "Duracao ate meta": cooling_to_target_duration,
+        "Duracao pos meta": post_target_duration,
         "Peso inicial": initial_weight,
         "Peso final": final_weight,
         "Perda": (
@@ -282,3 +380,135 @@ def cycle_metrics(data: pd.DataFrame, cycle: Cycle) -> dict[str, float | str]:
         ),
         "DT_ref medio": float(frame[REQUIRED_COLUMNS["DT_ref"]].mean()),
     }
+
+
+def rank_cycles(
+    data: pd.DataFrame,
+    cycles: list[Cycle],
+) -> pd.DataFrame:
+    """Rank eligible cycles by equal-weight normalized time and weight loss."""
+    rows: list[dict[str, object]] = []
+    for cycle in cycles:
+        metrics = cycle_metrics(data, cycle)
+        time_to_target = metrics["Tempo ate 7 C"]
+        loss = metrics["Perda"]
+        if (
+            not isinstance(time_to_target, (int, float))
+            or loss is None
+            or pd.isna(loss)
+            or loss < 0
+        ):
+            continue
+        rows.append(
+            {
+                "label": cycle.label,
+                "time_to_target": float(time_to_target),
+                "weight_loss": float(loss),
+            }
+        )
+
+    ranking = pd.DataFrame(rows)
+    if ranking.empty:
+        return ranking.assign(score=pd.Series(dtype=float), rank=pd.Series(dtype=int))
+
+    def normalized(series: pd.Series) -> pd.Series:
+        span = series.max() - series.min()
+        if span == 0:
+            return pd.Series(0.0, index=series.index)
+        return (series - series.min()) / span
+
+    ranking["time_score"] = normalized(ranking["time_to_target"])
+    ranking["loss_score"] = normalized(ranking["weight_loss"])
+    ranking["score"] = (ranking["time_score"] + ranking["loss_score"]) / 2
+    ranking = ranking.sort_values(
+        ["score", "time_to_target", "weight_loss", "label"]
+    ).reset_index(drop=True)
+    ranking["rank"] = ranking.index + 1
+    return ranking
+
+
+def selection_insights(
+    data: pd.DataFrame,
+    selected_cycles: list[Cycle],
+    ranking: pd.DataFrame,
+) -> list[str]:
+    """Return deterministic, non-causal observations for the selected cycles."""
+    records: list[dict[str, object]] = []
+    for index, cycle in enumerate(selected_cycles):
+        metrics = cycle_metrics(data, cycle)
+        records.append(
+            {
+                "name": f"Ciclo {index + 1}",
+                "label": cycle.label,
+                **metrics,
+            }
+        )
+
+    insights: list[str] = []
+    reached = [
+        record
+        for record in records
+        if isinstance(record["Tempo ate 7 C"], (int, float))
+    ]
+    valid_loss = [
+        record
+        for record in records
+        if isinstance(record["Perda"], (int, float)) and record["Perda"] >= 0
+    ]
+
+    if reached:
+        fastest = min(reached, key=lambda record: float(record["Tempo ate 7 C"]))
+        insights.append(
+            f'{fastest["name"]} atingiu 7 °C mais rapidamente '
+            f'({float(fastest["Tempo ate 7 C"]):.1f} h).'
+        )
+    if valid_loss:
+        lowest_loss = min(valid_loss, key=lambda record: float(record["Perda"]))
+        insights.append(
+            f'{lowest_loss["name"]} apresentou a menor perda de peso válida '
+            f'({float(lowest_loss["Perda"]):.2f}%).'
+        )
+
+    selected_labels = {cycle.label for cycle in selected_cycles}
+    selected_ranking = ranking[ranking["label"].isin(selected_labels)]
+    if not selected_ranking.empty:
+        best_label = str(selected_ranking.iloc[0]["label"])
+        best_index = next(
+            index
+            for index, cycle in enumerate(selected_cycles)
+            if cycle.label == best_label
+        )
+        insights.append(
+            f"Ciclo {best_index + 1} teve o melhor equilíbrio 50/50 "
+            "entre tempo até 7 °C e perda de peso."
+        )
+
+    for metric_key, label in (
+        ("Duracao carga", "carregamento"),
+        ("Duracao ate meta", "resfriamento até a meta"),
+        ("Duracao pos meta", "resfriamento pós-meta"),
+    ):
+        values = [
+            float(record[metric_key])
+            for record in records
+            if isinstance(record[metric_key], (int, float))
+        ]
+        if len(values) >= 2 and max(values) - min(values) >= 1:
+            insights.append(
+                f"A duração de {label} variou {max(values) - min(values):.1f} h "
+                "entre os ciclos selecionados."
+            )
+
+    invalid_loss_names = [
+        str(record["name"])
+        for record in records
+        if isinstance(record["Perda"], (int, float)) and record["Perda"] < 0
+    ]
+    if invalid_loss_names:
+        insights.append(
+            "Perda de peso negativa em "
+            + ", ".join(invalid_loss_names)
+            + "; esses valores permanecem visíveis, mas não entram no ranking."
+        )
+
+    return insights
