@@ -23,7 +23,6 @@ from thoms_dashboard_data import (
     hourly_phase_summary,
     load_supervision_data,
     rank_cycles,
-    selection_insights,
 )
 
 
@@ -331,25 +330,6 @@ def explanatory_table_frame(
     return pd.DataFrame([row for _, row in ordered], columns=columns).fillna("—")
 
 
-def render_selection_reading(
-    selected_cycles,
-    data: pd.DataFrame,
-    ranking: pd.DataFrame,
-) -> list[str]:
-    insights = selection_insights(data, selected_cycles, ranking)
-    st.subheader("Leitura da seleção")
-    for insight in insights:
-        st.markdown(
-            f'<div class="thoms-insight">{escape(insight)}</div>',
-            unsafe_allow_html=True,
-        )
-    st.caption(
-        "Síntese descritiva dos dados observados. Não estabelece relação causal "
-        "entre as variáveis de processo e o resultado."
-    )
-    return insights
-
-
 def main() -> None:
     enable_sidebar_autohide()
     st.image(str(BRAND_LOGO), width=360)
@@ -406,7 +386,6 @@ def main() -> None:
 
     cycle_by_label = {cycle.label: cycle for cycle in cycles}
     selected_cycles = [cycle_by_label[label] for label in selected_labels]
-    render_selection_reading(selected_cycles, data, ranking)
     render_cycle_summary_table(selected_cycles, data)
     phase_strip(selected_cycles, data)
 
