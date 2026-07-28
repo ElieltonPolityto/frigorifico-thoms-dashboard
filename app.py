@@ -413,33 +413,33 @@ def main() -> None:
         width="stretch",
     )
 
-    st.subheader("Médias horárias por variável")
+    st.subheader("Médias horárias e dados de apoio")
     if not selected_bar_metrics:
         st.info("Selecione pelo menos uma variável para exibir as barras horárias.")
-    for metric in selected_bar_metrics:
-        display_metric = DISPLAY_METRIC_NAMES.get(metric, metric)
-        st.markdown(f"#### {display_metric}")
-        st.altair_chart(
-            hourly_metric_chart(
-                selected_cycles,
-                data,
-                metric,
-                selected_hours,
-            ),
-            width="stretch",
+    else:
+        st.caption(
+            "As barras mostram apenas carregamento e resfriamento até a meta. "
+            "O período pós-meta permanece disponível no gráfico contínuo e na tabela."
         )
-    st.caption(
-        "Barras semitransparentes representam horas parciais com menos de "
-        "45 minutos de cobertura."
-    )
-
-    if selected_bar_metrics:
-        st.subheader("Tabela explicativa dos dados")
         tabs = st.tabs(
             [DISPLAY_METRIC_NAMES.get(metric, metric) for metric in selected_bar_metrics]
         )
         for tab, metric in zip(tabs, selected_bar_metrics):
             with tab:
+                st.altair_chart(
+                    hourly_metric_chart(
+                        selected_cycles,
+                        data,
+                        metric,
+                        selected_hours,
+                    ),
+                    width="stretch",
+                )
+                st.caption(
+                    "Barras semitransparentes representam horas parciais com menos de "
+                    "45 minutos de cobertura. Os valores exatos estão na tabela abaixo e no tooltip."
+                )
+                st.markdown("##### Valores horários")
                 render_html_table(
                     explanatory_table_frame(
                         selected_cycles,

@@ -17,6 +17,7 @@ from thoms_dashboard_data import (
 
 
 CYCLE_COLORS = ["#142B51", "#3CAAFB", "#82C9FD"]
+BAR_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
 PHASE_BACKGROUNDS = {
     PHASE_LOADING: "#E5F3FD",
     PHASE_TO_TARGET: "#F5F8FC",
@@ -125,8 +126,8 @@ def hourly_metric_chart(
     data: pd.DataFrame,
     metric: str,
     selected_hours: list[str],
-) -> alt.HConcatChart:
-    """Build one grouped-bar panel per phase for a selected metric."""
+) -> alt.TopLevelMixin:
+    """Build readable grouped bars for loading and cooling-to-target only."""
     rows: list[pd.DataFrame] = []
     unit = ""
     for index, cycle in enumerate(selected_cycles):
@@ -138,12 +139,18 @@ def hourly_metric_chart(
         hourly["Ciclo"] = _cycle_name(index)
         rows.append(hourly)
 
+    if not rows:
+        return _empty_hourly_chart()
+
     chart_data = pd.concat(rows, ignore_index=True)
+    chart_data = chart_data[chart_data["phase"].isin(BAR_PHASE_ORDER)].copy()
+    if chart_data.empty:
+        return _empty_hourly_chart()
+
     cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
-    show_value_labels = len(selected_cycles) == 1
     panels: list[alt.Chart] = []
 
-    for phase in PHASE_ORDER:
+    for phase in BAR_PHASE_ORDER:
         phase_data = chart_data[chart_data["phase"].eq(phase)].copy()
         if phase_data.empty:
             continue
@@ -157,7 +164,7 @@ def hourly_metric_chart(
             "hour_label:O",
             sort=hour_order,
             title=None,
-            axis=alt.Axis(labelAngle=0, labelPadding=6),
+            axis=alt.Axis(labelAngle=0, labelPadding=8, labelLimit=44),
         )
         offset = alt.XOffset("Ciclo:N", sort=cycle_domain)
         y_scale = (
@@ -172,7 +179,7 @@ def hourly_metric_chart(
                 domain=cycle_domain,
                 range=CYCLE_COLORS[: len(selected_cycles)],
             ),
-            legend=None if show_value_labels else alt.Legend(orient="top", title=None),
+            legend=alt.Legend(orient="top", title=None),
         )
         opacity = alt.condition(
             alt.datum.partial,
@@ -199,30 +206,33 @@ def hourly_metric_chart(
         }
         if metric == "Umidade":
             encoding["y2"] = alt.datum(92)
-        bars = alt.Chart(phase_data).mark_bar().encode(**encoding)
-        labels = (
-            alt.Chart(phase_data)
-            .mark_text(
-                dy=-7,
-                fontSize=11,
-                fontWeight="bold",
-                color="#263238",
-            )
-            .encode(
-                x=x,
-                xOffset=offset,
-                y=y,
-                text=alt.Text("value:Q", format=".1f"),
-                detail="Ciclo:N",
-            )
+        chart = alt.Chart(phase_data).mark_bar(cornerRadiusTopLeft=2, cornerRadiusTopRight=2).encode(
+            **encoding
         )
-        chart = bars + labels if show_value_labels else bars
         panels.append(
             chart.properties(
                 title=phase,
-                width=270,
-                height=210,
+                width=max(560, min(760, len(hour_order) * 52)),
+                height=235,
             )
         )
 
-    return alt.hconcat(*panels).resolve_scale(y="shared", color="shared")
+    return alt.vconcat(*panels, spacing=30).resolve_scale(y="shared", color="shared")
+
+
+def _empty_hourly_chart() -> alt.Chart:
+    """Explain why a bar chart is absent when only post-target hours are selected."""
+    return (
+        alt.Chart(
+            pd.DataFrame(
+                {
+                    "message": [
+                        "Barras disponíveis apenas para carregamento e resfriamento até a meta."
+                    ]
+                }
+            )
+        )
+        .mark_text(align="left", baseline="middle", color="#51606F", fontSize=13)
+        .encode(text="message:N")
+        .properties(width=620, height=42)
+    )
