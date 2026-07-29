@@ -490,7 +490,6 @@ def main() -> None:
                 st.session_state["thoms_pdf"] = build_dashboard_pdf(
                     selected_cycles=selected_cycles,
                     data=data,
-                    ranking=ranking,
                     main_metric=main_metric,
                     bar_metrics=selected_bar_metrics,
                     selected_hours=selected_hours,

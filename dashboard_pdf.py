@@ -30,11 +30,8 @@ from reportlab.platypus import (
 
 from dashboard_charts import continuous_phase_chart, hourly_metric_chart
 from thoms_dashboard_data import (
-    PHASE_ORDER,
     Cycle,
     cycle_metrics,
-    hourly_phase_summary,
-    selection_insights,
 )
 
 
@@ -240,53 +237,6 @@ def _summary_tables(
     )
 
 
-def _hourly_table(
-    selected_cycles: list[Cycle],
-    data: pd.DataFrame,
-    metric: str,
-    selected_hours: list[str],
-    styles,
-    regular_font: str,
-    bold_font: str,
-):
-    rows: dict[tuple[str, int, str], list[object]] = {}
-    for index, cycle in enumerate(selected_cycles):
-        hourly = hourly_phase_summary(data, cycle, metric)
-        hourly = hourly[hourly["hour_label"].isin(selected_hours)]
-        for record in hourly.to_dict("records"):
-            key = (
-                str(record["phase"]),
-                int(record["phase_hour"]),
-                str(record["hour_label"]),
-            )
-            row = rows.setdefault(
-                key,
-                [str(record["phase"]), str(record["hour_label"])]
-                + ["—"] * len(selected_cycles),
-            )
-            partial = " - parcial" if bool(record["partial"]) else ""
-            row[2 + index] = (
-                f'{float(record["value"]):.2f} {record["unit"]} | '
-                f'{float(record["coverage_minutes"]):.0f} min{partial}'
-            )
-    ordered = [
-        row
-        for _, row in sorted(
-            rows.items(),
-            key=lambda item: (PHASE_ORDER.index(item[0][0]), item[0][1]),
-        )
-    ]
-    header = ["Fase", "Hora"] + [
-        f"Ciclo {index + 1}" for index in range(len(selected_cycles))
-    ]
-    paragraph_rows = [
-        [_paragraph(value, styles["ThomsSmall"]) for value in row]
-        for row in [header] + ordered
-    ]
-    widths = [42 * mm, 15 * mm] + [48 * mm] * len(selected_cycles)
-    return _table(paragraph_rows, widths, regular_font, bold_font)
-
-
 def _page_footer(canvas, document, regular_font: str):
     canvas.saveState()
     canvas.setStrokeColor(GRID_COLOR)
@@ -306,7 +256,6 @@ def build_dashboard_pdf(
     *,
     selected_cycles: list[Cycle],
     data: pd.DataFrame,
-    ranking: pd.DataFrame,
     main_metric: str,
     bar_metrics: list[str],
     selected_hours: list[str],
@@ -345,32 +294,6 @@ def build_dashboard_pdf(
     story.append(
         Paragraph(
             "Variáveis horárias: " + (", ".join(bar_metrics) if bar_metrics else "nenhuma"),
-            styles["ThomsSmall"],
-        )
-    )
-
-    story.append(Paragraph("Leitura da seleção", styles["ThomsHeading"]))
-    for insight in selection_insights(data, selected_cycles, ranking):
-        story.append(
-            Table(
-                [[_paragraph(insight, styles["ThomsBody"])]],
-                colWidths=[usable_width],
-                style=TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F3F8FC")),
-                        ("LINEBEFORE", (0, 0), (0, -1), 3, ACCENT_BLUE),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                        ("TOPPADDING", (0, 0), (-1, -1), 5),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                    ]
-                ),
-            )
-        )
-        story.append(Spacer(1, 1.5 * mm))
-    story.append(
-        Paragraph(
-            "Síntese descritiva dos dados observados; não estabelece causalidade.",
             styles["ThomsSmall"],
         )
     )
@@ -426,19 +349,6 @@ def build_dashboard_pdf(
                 ),
                 usable_width,
                 maximum_height=115 * mm,
-            )
-        )
-        story.append(Spacer(1, 3 * mm))
-        story.append(Paragraph("Tabela explicativa", styles["ThomsHeading"]))
-        story.append(
-            _hourly_table(
-                selected_cycles,
-                data,
-                metric,
-                selected_hours,
-                styles,
-                regular_font,
-                bold_font,
             )
         )
 
