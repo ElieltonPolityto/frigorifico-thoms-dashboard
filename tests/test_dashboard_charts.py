@@ -25,7 +25,7 @@ class HourlyMetricChartTests(unittest.TestCase):
         cls.data = load_supervision_data(PROJECT_ROOT / "dados_entrada")
         cls.cycles = detect_valid_cycles(cls.data)
 
-    def test_bars_show_loading_and_cooling_to_target_only(self):
+    def test_hourly_chart_combines_loading_and_cooling_to_target_with_matrix(self):
         selected_cycles = self.cycles[:3]
         selected_hours = []
         for cycle in selected_cycles:
@@ -35,24 +35,18 @@ class HourlyMetricChartTests(unittest.TestCase):
         spec = chart.to_dict()
 
         self.assertEqual(len(spec["vconcat"]), 2)
-        self.assertEqual(
-            [panel["vconcat"][0]["title"] for panel in spec["vconcat"]],
-            [PHASE_LOADING, PHASE_TO_TARGET],
-        )
         self.assertNotIn(PHASE_POST_TARGET, str(spec))
-        self.assertTrue(
-            all(
-                panel["vconcat"][0]["mark"]["type"] == "bar"
-                for panel in spec["vconcat"]
-            )
+        self.assertEqual(spec["vconcat"][0]["mark"]["type"], "bar")
+        hour_sort = spec["vconcat"][0]["encoding"]["x"]["sort"]
+        self.assertIn("C0", hour_sort)
+        self.assertIn("R0", hour_sort)
+        self.assertLess(hour_sort.index("C0"), hour_sort.index("R0"))
+        matrix_layers = spec["vconcat"][1]["layer"]
+        self.assertEqual(
+            [layer["mark"]["type"] for layer in matrix_layers],
+            ["rect", "text"],
         )
-        for panel in spec["vconcat"]:
-            matrix_layers = panel["vconcat"][1]["layer"]
-            self.assertEqual(
-                [layer["mark"]["type"] for layer in matrix_layers],
-                ["rect", "text"],
-            )
-            self.assertIn("Ciclo curto", str(panel["vconcat"][1]))
+        self.assertIn("Ciclo curto", str(spec["vconcat"][1]))
 
     def test_continuous_hourly_metrics_use_lines_and_points_without_bar_offsets(self):
         selected_cycles = self.cycles[:3]
@@ -64,13 +58,12 @@ class HourlyMetricChartTests(unittest.TestCase):
             chart = hourly_metric_chart(selected_cycles, self.data, metric, selected_hours)
             spec = chart.to_dict()
 
-            for panel in spec["vconcat"]:
-                plot = panel["vconcat"][0]
-                self.assertEqual(
-                    [layer["mark"]["type"] for layer in plot["layer"]],
-                    ["line", "point"],
-                )
-                self.assertNotIn("xOffset", str(plot))
+            plot = spec["vconcat"][0]
+            self.assertEqual(
+                [layer["mark"]["type"] for layer in plot["layer"]],
+                ["line", "point"],
+            )
+            self.assertNotIn("xOffset", str(plot))
 
     def test_ventilation_uses_step_lines_with_square_markers(self):
         selected_cycles = self.cycles[:3]
@@ -81,12 +74,11 @@ class HourlyMetricChartTests(unittest.TestCase):
         chart = hourly_metric_chart(selected_cycles, self.data, "Ventilacao", selected_hours)
         spec = chart.to_dict()
 
-        for panel in spec["vconcat"]:
-            plot = panel["vconcat"][0]
-            self.assertEqual(plot["layer"][0]["mark"]["interpolate"], "step-after")
-            self.assertEqual(plot["layer"][1]["mark"]["shape"], "square")
+        plot = spec["vconcat"][0]
+        self.assertEqual(plot["layer"][0]["mark"]["interpolate"], "step-after")
+        self.assertEqual(plot["layer"][1]["mark"]["shape"], "square")
 
-    def test_continuous_chart_hides_post_target_panel(self):
+    def test_continuous_chart_combines_loading_and_cooling_and_hides_post_target(self):
         selected_cycles = self.cycles[:3]
         selected_hours = []
         for cycle in selected_cycles:
@@ -95,10 +87,12 @@ class HourlyMetricChartTests(unittest.TestCase):
         chart = continuous_phase_chart(selected_cycles, self.data, "Espeto", selected_hours)
         spec = chart.to_dict()
 
-        self.assertEqual(len(spec["vconcat"]), 2)
+        self.assertIn("layer", spec)
+        line = spec["layer"][0]
+        self.assertEqual(line["mark"]["type"], "line")
         self.assertEqual(
-            [panel["title"] for panel in spec["vconcat"]],
-            [PHASE_LOADING, PHASE_TO_TARGET],
+            line["encoding"]["x"]["field"],
+            "hours_from_cycle_start",
         )
         self.assertNotIn(PHASE_POST_TARGET, str(spec))
 

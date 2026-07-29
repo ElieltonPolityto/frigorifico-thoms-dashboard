@@ -364,10 +364,10 @@ def main() -> None:
         ),
     )
     selected_bar_metrics = st.sidebar.multiselect(
-        "Variáveis nas barras horárias",
+        "Variáveis na comparação horária",
         options=METRIC_OPTIONS,
         default=PDF_BAR_DEFAULTS,
-        help="Cada variável selecionada aparece em um painel de barras, como no PDF de referência.",
+        help="Cada variável selecionada aparece no resumo e em uma aba de comparação individual.",
     )
     main_metric = st.sidebar.selectbox(
         "Variável do gráfico contínuo",
@@ -415,31 +415,31 @@ def main() -> None:
 
     st.subheader("Médias horárias e dados de apoio")
     if not selected_bar_metrics:
-        st.info("Selecione pelo menos uma variável para exibir as barras horárias.")
+        st.info("Selecione pelo menos uma variável para exibir a comparação horária.")
     else:
         st.caption(
-            "Os gráficos mostram apenas carregamento e resfriamento até a meta. "
-            "O período pós-meta permanece disponível no gráfico contínuo e na tabela."
+            "Cada gráfico reúne carregamento e resfriamento até a meta no mesmo eixo. "
+            "O período pós-meta permanece disponível na tabela detalhada."
         )
-        tabs = st.tabs(
-            [DISPLAY_METRIC_NAMES.get(metric, metric) for metric in selected_bar_metrics]
-        )
-        for tab, metric in zip(tabs, selected_bar_metrics):
-            with tab:
-                st.altair_chart(
-                    hourly_metric_chart(
-                        selected_cycles,
-                        data,
-                        metric,
-                        selected_hours,
-                    ),
-                    width="stretch",
-                )
-                st.caption(
-                    "Marcas semitransparentes representam horas parciais com menos de "
-                    "45 minutos de cobertura. A matriz abaixo do eixo mostra os valores por ciclo; "
-                    "o asterisco identifica uma hora parcial."
-                )
+        def render_hourly_metric(metric: str, *, show_heading: bool, show_detail: bool) -> None:
+            display_name = DISPLAY_METRIC_NAMES.get(metric, metric)
+            if show_heading:
+                st.markdown(f"#### {display_name}")
+            st.altair_chart(
+                hourly_metric_chart(
+                    selected_cycles,
+                    data,
+                    metric,
+                    selected_hours,
+                ),
+                width="stretch",
+            )
+            st.caption(
+                "Marcas semitransparentes representam horas parciais com menos de "
+                "45 minutos de cobertura. A matriz abaixo do eixo mostra os valores por ciclo; "
+                "o asterisco identifica uma hora parcial."
+            )
+            if show_detail:
                 with st.expander("Ver tabela detalhada (inclui resfriamento pós-meta)"):
                     render_html_table(
                         explanatory_table_frame(
@@ -453,6 +453,17 @@ def main() -> None:
                         "Cada célula mostra a média horária, a unidade e a cobertura "
                         "observada. Horas com menos de 45 minutos são marcadas como parciais."
                     )
+
+        tabs = st.tabs(
+            ["Resumo"]
+            + [DISPLAY_METRIC_NAMES.get(metric, metric) for metric in selected_bar_metrics]
+        )
+        with tabs[0]:
+            for metric in selected_bar_metrics:
+                render_hourly_metric(metric, show_heading=True, show_detail=False)
+        for tab, metric in zip(tabs[1:], selected_bar_metrics):
+            with tab:
+                render_hourly_metric(metric, show_heading=False, show_detail=True)
 
     report_signature = (
         tuple(selected_labels),

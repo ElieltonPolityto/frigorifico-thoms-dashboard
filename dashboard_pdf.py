@@ -384,7 +384,12 @@ def build_dashboard_pdf(
     story.append(detail_table)
 
     story.append(PageBreak())
-    story.append(Paragraph(f"{main_metric} por fase", styles["ThomsHeading"]))
+    story.append(
+        Paragraph(
+            f"{main_metric} - carregamento e resfriamento até a meta",
+            styles["ThomsHeading"],
+        )
+    )
     story.append(
         _chart_image(
             continuous_phase_chart(
@@ -401,7 +406,12 @@ def build_dashboard_pdf(
 
     for metric in bar_metrics:
         story.append(PageBreak())
-        story.append(Paragraph(f"{metric} - médias horárias por fase", styles["ThomsHeading"]))
+        story.append(
+            Paragraph(
+                f"{metric} - médias horárias do carregamento ao resfriamento até a meta",
+                styles["ThomsHeading"],
+            )
+        )
         story.append(
             _chart_image(
                 hourly_metric_chart(
