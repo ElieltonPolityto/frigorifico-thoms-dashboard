@@ -56,18 +56,31 @@ class DashboardDataIntegrationTests(unittest.TestCase):
         self.assertTrue(summary["coverage_minutes"].between(0, 60).all())
         self.assertTrue((summary["partial"] == (summary["coverage_minutes"] < 45)).all())
 
-    def test_ranking_excludes_negative_weight_loss(self):
+    def test_ranking_excludes_cycles_without_a_valid_weight_loss(self):
         ranking = rank_cycles(self.data, self.cycles)
         ranked_labels = set(ranking["label"])
-        negative_labels = {
+        ineligible_labels = {
             cycle.label
             for cycle in self.cycles
-            if isinstance(cycle_metrics(self.data, cycle)["Perda"], (int, float))
-            and cycle_metrics(self.data, cycle)["Perda"] < 0
+            if not isinstance(cycle_metrics(self.data, cycle)["Perda"], (int, float))
+            or cycle_metrics(self.data, cycle)["Perda"] < 0
         }
-        self.assertTrue(negative_labels)
-        self.assertTrue(ranked_labels.isdisjoint(negative_labels))
+        self.assertTrue(ineligible_labels)
+        self.assertTrue(ranked_labels.isdisjoint(ineligible_labels))
         self.assertTrue((ranking["score"].diff().dropna() >= 0).all())
+
+    def test_weight_loss_uses_the_sample_five_minutes_after_loading_peak(self):
+        cycle = next(cycle for cycle in self.cycles if cycle.label.startswith("19/06/2026"))
+        metrics = cycle_metrics(self.data, cycle)
+
+        self.assertEqual(str(metrics["Hora referencia peso"]), "2026-06-19 11:37:00")
+        self.assertAlmostEqual(float(metrics["Peso referencia"]), 98.8, places=6)
+        self.assertAlmostEqual(float(metrics["Peso final"]), 96.8, places=6)
+        self.assertAlmostEqual(float(metrics["Perda"]), 2.0242914979757085, places=12)
+
+        ranking = rank_cycles(self.data, self.cycles)
+        ranked_loss = ranking.loc[ranking["label"].eq(cycle.label), "weight_loss"].iloc[0]
+        self.assertAlmostEqual(float(ranked_loss), float(metrics["Perda"]), places=12)
 
 
 if __name__ == "__main__":

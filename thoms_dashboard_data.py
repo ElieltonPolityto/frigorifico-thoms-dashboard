@@ -22,7 +22,6 @@ REQUIRED_COLUMNS = {
 DATA_COMPLETENESS_MIN = 0.95
 MAX_CONTINUOUS_GAP_MINUTES = 5
 MIN_VALID_WEIGHT_KG = 90
-MAX_WEIGHT_AT_TARGET_DELAY_MINUTES = 5
 OPERATIONAL_CYCLE_CUTOFF_HOUR = 11
 WEEKDAY_ABBREVIATIONS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
 TARGET_ESPETO_C = 7.0
@@ -65,25 +64,34 @@ def _positive_weights(frame: pd.DataFrame) -> pd.Series:
 
 
 def _initial_loaded_weight(frame: pd.DataFrame) -> pd.Series:
-    """The start of the loss calculation is the first weight above 90 kg."""
-    return _positive_weights(frame).where(_positive_weights(frame) > MIN_VALID_WEIGHT_KG)
+    """Return valid scale readings above the minimum loaded weight."""
+    positive_weight = _positive_weights(frame)
+    return positive_weight.where(positive_weight > MIN_VALID_WEIGHT_KG)
+
+
+def _weight_reference_after_loading_peak(
+    frame: pd.DataFrame,
+    cooling_start: pd.Timestamp,
+) -> tuple[pd.Timestamp, float] | None:
+    """Use the valid weight exactly five minutes after the loading-phase peak."""
+    valid_weight = _initial_loaded_weight(frame)
+    loading_weights = valid_weight.where(frame["timestamp"] < cooling_start).dropna()
+    if loading_weights.empty:
+        return None
+
+    peak_index = loading_weights.idxmax()
+    reference_time = frame.at[peak_index, "timestamp"] + pd.Timedelta(minutes=5)
+    reference = valid_weight.where(frame["timestamp"] == reference_time).dropna()
+    if reference.empty:
+        return None
+    return reference_time, float(reference.iloc[0])
 
 
 def _weight_at_7_c(frame: pd.DataFrame, reached_7_time: pd.Timestamp) -> float | None:
-    """Use the valid scale sample at, or immediately before, the 7 C crossing."""
+    """Return the valid scale sample at the first espeto reading at or below 7 C."""
     valid_weight = _initial_loaded_weight(frame)
-    before = valid_weight.where(frame["timestamp"] <= reached_7_time).dropna()
-    if not before.empty:
-        timestamp = frame.loc[before.index[-1], "timestamp"]
-        if reached_7_time - timestamp <= pd.Timedelta(minutes=MAX_WEIGHT_AT_TARGET_DELAY_MINUTES):
-            return float(before.iloc[-1])
-
-    after = valid_weight.where(frame["timestamp"] > reached_7_time).dropna()
-    if not after.empty:
-        timestamp = frame.loc[after.index[0], "timestamp"]
-        if timestamp - reached_7_time <= pd.Timedelta(minutes=MAX_WEIGHT_AT_TARGET_DELAY_MINUTES):
-            return float(after.iloc[0])
-    return None
+    at_target = valid_weight.where(frame["timestamp"] == reached_7_time).dropna()
+    return None if at_target.empty else float(at_target.iloc[0])
 
 
 def _read_daily_csv(path: Path) -> pd.DataFrame:
@@ -260,10 +268,13 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
 
     if metric == "Peso":
         valid_weight = _initial_loaded_weight(frame)
-        initial_weight_series = valid_weight.dropna()
-        initial_weight = initial_weight_series.iloc[0]
-        initial_time = initial_weight_series.index[0]
-        valid_weight = valid_weight.where(frame.index >= initial_time)
+        reference = _weight_reference_after_loading_peak(frame, cooling_time)
+        if reference is None:
+            frame["value"] = np.nan
+            frame["unit"] = "% de perda acumulada"
+            return frame
+        reference_time, initial_weight = reference
+        valid_weight = valid_weight.where(frame["timestamp"] >= reference_time)
         if reached_7_time is not None:
             valid_weight = valid_weight.where(frame["timestamp"] <= reached_7_time)
         frame["value"] = (initial_weight - valid_weight) / initial_weight * 100
@@ -337,16 +348,19 @@ def hourly_phase_summary(
     )
 
 
-def cycle_metrics(data: pd.DataFrame, cycle: Cycle) -> dict[str, float | str]:
-    """Calculate the KPI cards using the agreed cycle boundaries."""
+def cycle_metrics(
+    data: pd.DataFrame,
+    cycle: Cycle,
+) -> dict[str, float | str]:
+    """Calculate KPIs from the technical weight-reference rule."""
     frame = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
     cooling_start = data.at[cycle.cooling_index, "timestamp"]
-    weights = _initial_loaded_weight(frame).dropna()
     espeto = frame[REQUIRED_COLUMNS["Espeto"]]
     reached_7_time = _first_time_at_or_below_7(frame, cooling_start)
     initial_espeto = espeto.where(espeto > 35).dropna()
 
-    initial_weight = float(weights.iloc[0])
+    reference = _weight_reference_after_loading_peak(frame, cooling_start)
+    initial_weight = reference[1] if reference is not None else None
     final_weight = None
     if reached_7_time is not None:
         final_weight = _weight_at_7_c(frame, reached_7_time)
@@ -363,16 +377,20 @@ def cycle_metrics(data: pd.DataFrame, cycle: Cycle) -> dict[str, float | str]:
         if reached_7_time is not None
         else None
     )
+    loss = (
+        (initial_weight - final_weight) / initial_weight * 100
+        if initial_weight is not None and final_weight is not None
+        else None
+    )
     return {
         "Duracao carga": (cooling_start - frame["timestamp"].iloc[0]).total_seconds() / 3600,
         "Duracao resfriamento": cooling_duration,
         "Duracao ate meta": cooling_to_target_duration,
         "Duracao pos meta": post_target_duration,
-        "Peso inicial": initial_weight,
+        "Peso referencia": initial_weight,
+        "Hora referencia peso": reference[0] if reference is not None else None,
         "Peso final": final_weight,
-        "Perda": (
-            (initial_weight - final_weight) / initial_weight * 100 if final_weight is not None else None
-        ),
+        "Perda": loss,
         "Espeto inicial": float(initial_espeto.iloc[0]) if not initial_espeto.empty else None,
         "Espeto final": float(espeto.dropna().iloc[-1]),
         "Tempo ate 7 C": (

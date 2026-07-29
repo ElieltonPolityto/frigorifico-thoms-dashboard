@@ -254,7 +254,7 @@ def cycle_summary_frame(selected_cycles, data: pd.DataFrame) -> pd.DataFrame:
                 "C": formatted(metrics["Duracao carga"], "h"),
                 "R": formatted(metrics["Duracao ate meta"], "h"),
                 "P": formatted(metrics["Duracao pos meta"], "h"),
-                "Peso inicial": formatted(metrics["Peso inicial"], "kg"),
+                "Peso de referencia": formatted(metrics["Peso referencia"], "kg"),
                 "Peso aos 7 °C": formatted(metrics["Peso final"], "kg"),
                 "Perda até 7 °C": formatted(metrics["Perda"], "%", decimals=2),
                 "Espeto inicial": formatted(metrics["Espeto inicial"], "°C"),
@@ -274,6 +274,12 @@ def render_cycle_summary_table(selected_cycles, data: pd.DataFrame) -> None:
     render_html_table(
         cycle_summary_frame(selected_cycles, data),
         period_column="Período",
+    )
+
+
+    st.caption(
+        "Perda at\u00e9 7 \u00b0C = (peso v\u00e1lido 5 min ap\u00f3s o maior peso no carregamento "
+        "\u2212 peso na primeira leitura de espeto \u2264 7 \u00b0C) / peso de refer\u00eancia."
     )
 
 
@@ -343,7 +349,8 @@ def main() -> None:
     )
 
     try:
-        data = load_dashboard_data(str(DATA_FOLDER), folder_last_modified(DATA_FOLDER))
+        data_folder_mtime = folder_last_modified(DATA_FOLDER)
+        data = load_dashboard_data(str(DATA_FOLDER), data_folder_mtime)
         cycles = detect_valid_cycles(data)
         ranking = rank_cycles(data, cycles)
     except (FileNotFoundError, ValueError) as error:

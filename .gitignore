@@ -8,3 +8,5 @@ output/pdf/*.pdf
 output/playwright/
 tmp/pdfs/
 .playwright-cli/
+dados_entrada/~$*.xlsx
+dados_entrada/matriz_estrategias_por_ciclo.xlsx

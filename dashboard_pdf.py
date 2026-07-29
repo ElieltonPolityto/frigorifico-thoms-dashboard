@@ -185,7 +185,7 @@ def _summary_tables(
     detail = [
         [
             "Ciclo",
-            "Peso inicial",
+            "Peso de referencia",
             "Peso aos 7 °C",
             "Espeto inicial",
             "Espeto final",
@@ -213,7 +213,7 @@ def _summary_tables(
         detail.append(
             [
                 f"Ciclo {index + 1}",
-                _format_value(metrics["Peso inicial"], "kg"),
+                _format_value(metrics["Peso referencia"], "kg"),
                 _format_value(metrics["Peso final"], "kg"),
                 _format_value(metrics["Espeto inicial"], "°C"),
                 _format_value(metrics["Espeto final"], "°C"),
