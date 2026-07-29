@@ -388,6 +388,7 @@ def cycle_metrics(
         "Duracao ate meta": cooling_to_target_duration,
         "Duracao pos meta": post_target_duration,
         "Peso referencia": initial_weight,
+        "Peso inicial": initial_weight,
         "Hora referencia peso": reference[0] if reference is not None else None,
         "Peso final": final_weight,
         "Perda": loss,

@@ -247,6 +247,10 @@ def cycle_summary_frame(selected_cycles, data: pd.DataFrame) -> pd.DataFrame:
     for index, cycle in enumerate(selected_cycles):
         metrics = cycle_metrics(data, cycle)
         time_to_target = metrics["Tempo ate 7 C"]
+        reference_weight = metrics.get(
+            "Peso referencia",
+            metrics.get("Peso inicial"),
+        )
         rows.append(
             {
                 "Ciclo": f"Ciclo {index + 1}",
@@ -254,7 +258,7 @@ def cycle_summary_frame(selected_cycles, data: pd.DataFrame) -> pd.DataFrame:
                 "C": formatted(metrics["Duracao carga"], "h"),
                 "R": formatted(metrics["Duracao ate meta"], "h"),
                 "P": formatted(metrics["Duracao pos meta"], "h"),
-                "Peso de referencia": formatted(metrics["Peso referencia"], "kg"),
+                "Peso de referencia": formatted(reference_weight, "kg"),
                 "Peso aos 7 °C": formatted(metrics["Peso final"], "kg"),
                 "Perda até 7 °C": formatted(metrics["Perda"], "%", decimals=2),
                 "Espeto inicial": formatted(metrics["Espeto inicial"], "°C"),

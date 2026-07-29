@@ -75,6 +75,7 @@ class DashboardDataIntegrationTests(unittest.TestCase):
 
         self.assertEqual(str(metrics["Hora referencia peso"]), "2026-06-19 11:37:00")
         self.assertAlmostEqual(float(metrics["Peso referencia"]), 98.8, places=6)
+        self.assertEqual(metrics["Peso inicial"], metrics["Peso referencia"])
         self.assertAlmostEqual(float(metrics["Peso final"]), 96.8, places=6)
         self.assertAlmostEqual(float(metrics["Perda"]), 2.0242914979757085, places=12)
 

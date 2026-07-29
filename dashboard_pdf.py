@@ -195,6 +195,10 @@ def _summary_tables(
     for index, cycle in enumerate(selected_cycles):
         metrics = cycle_metrics(data, cycle)
         time_to_target = metrics["Tempo ate 7 C"]
+        reference_weight = metrics.get(
+            "Peso referencia",
+            metrics.get("Peso inicial"),
+        )
         overview.append(
             [
                 f"Ciclo {index + 1}",
@@ -213,7 +217,7 @@ def _summary_tables(
         detail.append(
             [
                 f"Ciclo {index + 1}",
-                _format_value(metrics["Peso referencia"], "kg"),
+                _format_value(reference_weight, "kg"),
                 _format_value(metrics["Peso final"], "kg"),
                 _format_value(metrics["Espeto inicial"], "°C"),
                 _format_value(metrics["Espeto final"], "°C"),
