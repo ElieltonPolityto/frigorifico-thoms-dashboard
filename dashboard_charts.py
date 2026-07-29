@@ -38,6 +38,81 @@ def _phase_background(maximum_x: float, color: str) -> alt.Chart:
     )
 
 
+def _hourly_value_matrix(
+    phase_data: pd.DataFrame,
+    *,
+    hour_order: list[str],
+    cycle_short_domain: list[str],
+    metric: str,
+    unit: str,
+    width: int,
+) -> alt.LayerChart:
+    """Render a compact value grid aligned with the hourly chart categories."""
+    grid = pd.MultiIndex.from_product(
+        [cycle_short_domain, hour_order],
+        names=["Ciclo curto", "hour_label"],
+    ).to_frame(index=False)
+    value_columns = [
+        "Ciclo curto",
+        "hour_label",
+        "value",
+        "partial",
+        "coverage_minutes",
+    ]
+    matrix_data = grid.merge(
+        phase_data[value_columns],
+        on=["Ciclo curto", "hour_label"],
+        how="left",
+    )
+    matrix_data["partial"] = matrix_data["partial"].astype("boolean").fillna(False)
+    precision = 2 if metric == "Peso" else 1
+    matrix_data["value_label"] = matrix_data["value"].map(
+        lambda value: "" if pd.isna(value) else f"{value:.{precision}f}"
+    )
+    matrix_data.loc[matrix_data["partial"], "value_label"] += "*"
+
+    x = alt.X("hour_label:O", sort=hour_order, title=None, axis=None)
+    y = alt.Y(
+        "Ciclo curto:N",
+        sort=cycle_short_domain,
+        title=None,
+        axis=alt.Axis(
+            domain=False,
+            ticks=False,
+            labelColor="#142B51",
+            labelFontWeight=600,
+            labelPadding=8,
+        ),
+    )
+    tooltip = [
+        alt.Tooltip("Ciclo curto:N", title="Ciclo"),
+        alt.Tooltip("hour_label:N", title="Hora"),
+        alt.Tooltip("value:Q", title=f"Média ({unit})", format=".2f"),
+        alt.Tooltip("coverage_minutes:Q", title="Cobertura (min)", format=".0f"),
+        alt.Tooltip("partial:N", title="Hora parcial"),
+    ]
+    cells = (
+        alt.Chart(matrix_data)
+        .mark_rect(fill="#F7FAFC", stroke="#D9E3EE")
+        .encode(x=x, y=y)
+    )
+    values = (
+        alt.Chart(matrix_data)
+        .mark_text(color="#263238", fontSize=10, fontWeight=500)
+        .encode(
+            x=x,
+            y=y,
+            text="value_label:N",
+            opacity=alt.condition(alt.datum.partial, alt.value(0.52), alt.value(0.95)),
+            tooltip=tooltip,
+        )
+    )
+    return (cells + values).properties(
+        width=width,
+        height=max(28, len(cycle_short_domain) * 24),
+    )
+
+
 def continuous_phase_chart(
     selected_cycles: list[Cycle],
     data: pd.DataFrame,
@@ -137,6 +212,7 @@ def hourly_metric_chart(
         unit = str(hourly["unit"].iloc[0])
         hourly = hourly[hourly["hour_label"].isin(selected_hours)].copy()
         hourly["Ciclo"] = _cycle_name(index)
+        hourly["Ciclo curto"] = f"C{index + 1}"
         rows.append(hourly)
 
     if not rows:
@@ -148,7 +224,8 @@ def hourly_metric_chart(
         return _empty_hourly_chart()
 
     cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
-    panels: list[alt.Chart] = []
+    cycle_short_domain = [f"C{index + 1}" for index in range(len(selected_cycles))]
+    panels: list[alt.TopLevelMixin] = []
 
     for phase in BAR_PHASE_ORDER:
         phase_data = chart_data[chart_data["phase"].eq(phase)].copy()
@@ -239,12 +316,25 @@ def hourly_metric_chart(
                 cornerRadiusTopLeft=2,
                 cornerRadiusTopRight=2,
             ).encode(**bar_encoding)
+        panel_width = max(560, min(760, len(hour_order) * 52))
+        matrix = _hourly_value_matrix(
+            phase_data,
+            hour_order=hour_order,
+            cycle_short_domain=cycle_short_domain,
+            metric=metric,
+            unit=unit,
+            width=panel_width,
+        )
         panels.append(
-            chart.properties(
-                title=phase,
-                width=max(560, min(760, len(hour_order) * 52)),
-                height=235,
-            )
+            alt.vconcat(
+                chart.properties(
+                    title=phase,
+                    width=panel_width,
+                    height=235,
+                ),
+                matrix,
+                spacing=2,
+            ).resolve_scale(x="shared")
         )
 
     return alt.vconcat(*panels, spacing=30).resolve_scale(y="shared", color="shared")

@@ -437,21 +437,22 @@ def main() -> None:
                 )
                 st.caption(
                     "Marcas semitransparentes representam horas parciais com menos de "
-                    "45 minutos de cobertura. Os valores exatos estão na tabela abaixo e no tooltip."
+                    "45 minutos de cobertura. A matriz abaixo do eixo mostra os valores por ciclo; "
+                    "o asterisco identifica uma hora parcial."
                 )
-                st.markdown("##### Valores horários")
-                render_html_table(
-                    explanatory_table_frame(
-                        selected_cycles,
-                        data,
-                        metric,
-                        selected_hours,
+                with st.expander("Ver tabela detalhada (inclui resfriamento pós-meta)"):
+                    render_html_table(
+                        explanatory_table_frame(
+                            selected_cycles,
+                            data,
+                            metric,
+                            selected_hours,
+                        )
                     )
-                )
-                st.caption(
-                    "Cada célula mostra a média horária, a unidade e a cobertura "
-                    "observada. Horas com menos de 45 minutos são marcadas como parciais."
-                )
+                    st.caption(
+                        "Cada célula mostra a média horária, a unidade e a cobertura "
+                        "observada. Horas com menos de 45 minutos são marcadas como parciais."
+                    )
 
     report_signature = (
         tuple(selected_labels),

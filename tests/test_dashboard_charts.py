@@ -36,13 +36,23 @@ class HourlyMetricChartTests(unittest.TestCase):
 
         self.assertEqual(len(spec["vconcat"]), 2)
         self.assertEqual(
-            [panel["title"] for panel in spec["vconcat"]],
+            [panel["vconcat"][0]["title"] for panel in spec["vconcat"]],
             [PHASE_LOADING, PHASE_TO_TARGET],
         )
         self.assertNotIn(PHASE_POST_TARGET, str(spec))
         self.assertTrue(
-            all(panel["mark"]["type"] == "bar" for panel in spec["vconcat"])
+            all(
+                panel["vconcat"][0]["mark"]["type"] == "bar"
+                for panel in spec["vconcat"]
+            )
         )
+        for panel in spec["vconcat"]:
+            matrix_layers = panel["vconcat"][1]["layer"]
+            self.assertEqual(
+                [layer["mark"]["type"] for layer in matrix_layers],
+                ["rect", "text"],
+            )
+            self.assertIn("Ciclo curto", str(panel["vconcat"][1]))
 
     def test_continuous_hourly_metrics_use_lines_and_points_without_bar_offsets(self):
         selected_cycles = self.cycles[:3]
@@ -55,11 +65,12 @@ class HourlyMetricChartTests(unittest.TestCase):
             spec = chart.to_dict()
 
             for panel in spec["vconcat"]:
+                plot = panel["vconcat"][0]
                 self.assertEqual(
-                    [layer["mark"]["type"] for layer in panel["layer"]],
+                    [layer["mark"]["type"] for layer in plot["layer"]],
                     ["line", "point"],
                 )
-                self.assertNotIn("xOffset", str(panel))
+                self.assertNotIn("xOffset", str(plot))
 
     def test_ventilation_uses_step_lines_with_square_markers(self):
         selected_cycles = self.cycles[:3]
@@ -71,8 +82,9 @@ class HourlyMetricChartTests(unittest.TestCase):
         spec = chart.to_dict()
 
         for panel in spec["vconcat"]:
-            self.assertEqual(panel["layer"][0]["mark"]["interpolate"], "step-after")
-            self.assertEqual(panel["layer"][1]["mark"]["shape"], "square")
+            plot = panel["vconcat"][0]
+            self.assertEqual(plot["layer"][0]["mark"]["interpolate"], "step-after")
+            self.assertEqual(plot["layer"][1]["mark"]["shape"], "square")
 
     def test_continuous_chart_hides_post_target_panel(self):
         selected_cycles = self.cycles[:3]
