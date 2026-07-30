@@ -1,2 +1,2 @@
 Redeploy trigger for Streamlit Cloud.
-Updated: 2026-07-30
+Updated: 2026-07-30 - fresh module rebuild after dashboard reconciliation.
