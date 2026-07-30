@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from dashboard_charts import continuous_phase_chart, hourly_metric_chart
+from dashboard_charts import (
+    continuous_phase_chart,
+    hourly_metric_chart,
+    main_cycle_chart,
+    weight_loss_comparison_chart,
+)
 from thoms_dashboard_data import (
     PHASE_LOADING,
     PHASE_POST_TARGET,
@@ -65,7 +70,7 @@ class HourlyMetricChartTests(unittest.TestCase):
             )
             self.assertNotIn("xOffset", str(plot))
 
-    def test_ventilation_uses_step_lines_with_square_markers(self):
+    def test_ventilation_uses_step_lines_and_cycle_markers(self):
         selected_cycles = self.cycles[:3]
         selected_hours = []
         for cycle in selected_cycles:
@@ -76,7 +81,8 @@ class HourlyMetricChartTests(unittest.TestCase):
 
         plot = spec["vconcat"][0]
         self.assertEqual(plot["layer"][0]["mark"]["interpolate"], "step-after")
-        self.assertEqual(plot["layer"][1]["mark"]["shape"], "square")
+        self.assertEqual(plot["layer"][1]["encoding"]["shape"]["field"], "Ciclo")
+        self.assertEqual(plot["layer"][0]["encoding"]["strokeDash"]["field"], "Ciclo")
 
     def test_continuous_chart_combines_loading_and_cooling_and_hides_post_target(self):
         selected_cycles = self.cycles[:3]
@@ -95,6 +101,59 @@ class HourlyMetricChartTests(unittest.TestCase):
             "hours_from_cycle_start",
         )
         self.assertNotIn(PHASE_POST_TARGET, str(spec))
+
+    def test_main_chart_uses_four_aligned_bands_and_expected_domains(self):
+        selected_cycles = self.cycles[:3]
+        selected_hours = []
+        for cycle in selected_cycles:
+            selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
+
+        chart = main_cycle_chart(
+            selected_cycles[0],
+            selected_cycles,
+            self.data,
+            ["Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso"],
+            selected_hours,
+            interactive=False,
+        )
+        spec = chart.to_dict()
+
+        self.assertEqual(len(spec["vconcat"]), 4)
+        temperature_y = spec["vconcat"][0]["layer"][2]["encoding"]["y"]
+        ventilation_y = spec["vconcat"][1]["layer"][2]["encoding"]["y"]
+        humidity_y = spec["vconcat"][2]["layer"][2]["encoding"]["y"]
+        self.assertEqual(temperature_y["scale"]["domain"], [-10, 50])
+        self.assertEqual(ventilation_y["scale"]["domain"], [0, 100])
+        self.assertEqual(humidity_y["scale"]["domain"], [92, 100])
+        self.assertEqual(humidity_y["title"], "Umidade relativa (%)")
+
+        weight_layers = spec["vconcat"][3]["layer"]
+        self.assertEqual(weight_layers[2]["encoding"]["y"]["title"], "")
+        self.assertIsNone(weight_layers[3]["encoding"]["y"]["title"])
+        self.assertEqual(weight_layers[3]["encoding"]["y"]["field"], "weight_plot_kg")
+        self.assertNotIn("axis", weight_layers[3]["encoding"]["y"])
+        self.assertEqual(
+            spec["vconcat"][3]["title"]["text"],
+            "Peso até 7 °C (kg) · pontos azuis: perda acumulada por hora (%)",
+        )
+
+    def test_weight_loss_chart_combines_percentage_and_kg_in_one_panel(self):
+        selected_cycles = self.cycles[:3]
+        selected_hours = []
+        for cycle in selected_cycles:
+            selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
+
+        spec = weight_loss_comparison_chart(
+            selected_cycles,
+            self.data,
+            selected_hours,
+        ).to_dict()
+
+        self.assertNotIn("vconcat", spec)
+        self.assertEqual([layer["mark"]["type"] for layer in spec["layer"]], ["rule", "line", "line"])
+        self.assertEqual(spec["layer"][1]["encoding"]["y"]["title"], "Perda acumulada (%)")
+        self.assertEqual(spec["layer"][2]["encoding"]["y"]["title"], "Perda acumulada (kg)")
+        self.assertEqual(spec["layer"][2]["encoding"]["y"]["axis"]["orient"], "right")
 
 
 if __name__ == "__main__":
