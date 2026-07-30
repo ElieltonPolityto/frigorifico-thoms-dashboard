@@ -7,10 +7,13 @@ from thoms_dashboard_data import (
     PHASE_TO_TARGET,
     cycle_frame,
     cycle_metrics,
+    cycle_weight_quality,
     detect_valid_cycles,
     hourly_phase_summary,
     load_supervision_data,
     rank_cycles,
+    valid_weight_series,
+    weight_loss_frame,
 )
 
 
@@ -64,6 +67,7 @@ class DashboardDataIntegrationTests(unittest.TestCase):
             for cycle in self.cycles
             if not isinstance(cycle_metrics(self.data, cycle)["Perda"], (int, float))
             or cycle_metrics(self.data, cycle)["Perda"] < 0
+            or bool(cycle_metrics(self.data, cycle)["Peso suspeito"])
         }
         self.assertTrue(ineligible_labels)
         self.assertTrue(ranked_labels.isdisjoint(ineligible_labels))
@@ -82,6 +86,46 @@ class DashboardDataIntegrationTests(unittest.TestCase):
         ranking = rank_cycles(self.data, self.cycles)
         ranked_loss = ranking.loc[ranking["label"].eq(cycle.label), "weight_loss"].iloc[0]
         self.assertAlmostEqual(float(ranked_loss), float(metrics["Perda"]), places=12)
+
+    def test_weight_limits_preserve_raw_values_and_exclude_out_of_range_series(self):
+        raw = self.data.copy()
+        raw_weight = raw["Peso atual"].copy()
+        valid = valid_weight_series(raw)
+
+        self.assertTrue(raw_weight.equals(raw["Peso atual"]))
+        self.assertTrue(valid.dropna().gt(50).all())
+        self.assertTrue(valid.dropna().le(300).all())
+        self.assertTrue(valid.loc[raw_weight.gt(300)].isna().all())
+
+    def test_weight_loss_frame_reconciles_absolute_and_percentage_loss(self):
+        cycle = next(cycle for cycle in self.cycles if cycle.label.startswith("19/06/2026"))
+        frame = weight_loss_frame(self.data, cycle)
+        valid = frame.dropna(subset=["weight_kg"])
+
+        self.assertFalse(valid.empty)
+        self.assertTrue(frame["is_reference"].any())
+        self.assertTrue(frame["is_target"].any())
+        reference = valid.loc[valid["is_reference"], "weight_kg"].iloc[0]
+        self.assertTrue(
+            (
+                valid["loss_pct"]
+                .sub(valid["loss_kg"] / reference * 100)
+                .abs()
+                .lt(1e-9)
+                .all()
+            )
+        )
+
+    def test_weight_quality_flags_abrupt_cycles_and_excludes_them_from_ranking(self):
+        suspicious = [
+            cycle for cycle in self.cycles if cycle_weight_quality(self.data, cycle).suspect
+        ]
+        ranking = rank_cycles(self.data, self.cycles)
+
+        self.assertEqual(len(self.cycles), 25)
+        self.assertEqual(len(suspicious), 3)
+        self.assertEqual(len(ranking), 15)
+        self.assertTrue(ranking["label"].isin([cycle.label for cycle in suspicious]).sum() == 0)
 
 
 if __name__ == "__main__":

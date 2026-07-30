@@ -11,8 +11,9 @@ import streamlit.components.v1 as components
 
 from dashboard_charts import (
     CYCLE_COLORS,
-    continuous_phase_chart,
     hourly_metric_chart,
+    main_cycle_chart,
+    weight_loss_comparison_chart,
 )
 from dashboard_pdf import build_dashboard_pdf
 from thoms_dashboard_data import (
@@ -30,6 +31,7 @@ DATA_FOLDER = Path(__file__).parent / "dados_entrada"
 BRAND_LOGO = Path(__file__).parent / "static" / "brand" / "plotter-racks-logo-blue.png"
 COLORS = CYCLE_COLORS
 METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol", "Retorno de ar"]
+MAIN_METRIC_OPTIONS = ["Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso"]
 PDF_BAR_DEFAULTS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao"]
 DISPLAY_METRIC_NAMES = {"Umidade": "Umidade Relativa"}
 
@@ -261,6 +263,7 @@ def cycle_summary_frame(selected_cycles, data: pd.DataFrame) -> pd.DataFrame:
                 "Peso de referencia": formatted(reference_weight, "kg"),
                 "Peso aos 7 °C": formatted(metrics["Peso final"], "kg"),
                 "Perda até 7 °C": formatted(metrics["Perda"], "%", decimals=2),
+                "Perda absoluta": formatted(metrics.get("Perda absoluta"), "kg", decimals=2),
                 "Espeto inicial": formatted(metrics["Espeto inicial"], "°C"),
                 "Até 7 °C": (
                     format_hours(time_to_target)
@@ -278,12 +281,6 @@ def render_cycle_summary_table(selected_cycles, data: pd.DataFrame) -> None:
     render_html_table(
         cycle_summary_frame(selected_cycles, data),
         period_column="Período",
-    )
-
-
-    st.caption(
-        "Perda at\u00e9 7 \u00b0C = (peso v\u00e1lido 5 min ap\u00f3s o maior peso no carregamento "
-        "\u2212 peso na primeira leitura de espeto \u2264 7 \u00b0C) / peso de refer\u00eancia."
     )
 
 
@@ -361,7 +358,7 @@ def main() -> None:
         st.error(str(error))
         return
 
-    suggested_labels = ranking.head(3)["label"].tolist()
+    suggested_labels = ranking.head(1)["label"].tolist()
     st.sidebar.header("Seleção")
     selected_labels = st.sidebar.multiselect(
         "Escolha até três ciclos",
@@ -370,7 +367,7 @@ def main() -> None:
         max_selections=3,
         placeholder="Selecione um ciclo",
         help=(
-            "A seleção inicial sugere os três melhores equilíbrios entre tempo "
+            "A seleção inicial abre o ciclo com melhor equilíbrio entre tempo "
             "até 7 °C e perda de peso, com ponderação de 50% para cada indicador."
         ),
     )
@@ -380,10 +377,11 @@ def main() -> None:
         default=PDF_BAR_DEFAULTS,
         help="Cada variável selecionada aparece no resumo e em uma aba de comparação individual.",
     )
-    main_metric = st.sidebar.selectbox(
-        "Variável do gráfico contínuo",
-        options=selected_bar_metrics or METRIC_OPTIONS,
-        index=0,
+    visible_main_metrics = st.sidebar.multiselect(
+        "Variáveis do gráfico principal",
+        options=MAIN_METRIC_OPTIONS,
+        default=MAIN_METRIC_OPTIONS,
+        help="As faixas usam escalas independentes e permanecem sincronizadas no tempo.",
     )
     st.sidebar.caption(f"{len(cycles)} ciclos válidos encontrados nos CSVs disponíveis.")
     st.sidebar.caption(
@@ -396,7 +394,22 @@ def main() -> None:
         return
 
     cycle_by_label = {cycle.label: cycle for cycle in cycles}
+    ranking_position = {
+        str(record.label): int(record.rank)
+        for record in ranking.itertuples(index=False)
+    }
+    selected_labels = sorted(
+        selected_labels,
+        key=lambda label: (ranking_position.get(label, len(cycles) + 1), label),
+    )
     selected_cycles = [cycle_by_label[label] for label in selected_labels]
+    active_label = st.sidebar.selectbox(
+        "Ciclo do gráfico principal",
+        options=selected_labels,
+        format_func=lambda label: f"Ciclo {selected_labels.index(label) + 1} - {label}",
+        help="O Ciclo 1 abre primeiro; a comparação de peso continua mostrando todos os ciclos selecionados.",
+    )
+    active_cycle = cycle_by_label[active_label]
     render_cycle_summary_table(selected_cycles, data)
     phase_strip(selected_cycles, data)
 
@@ -413,14 +426,23 @@ def main() -> None:
     start_hour, end_hour = selected_time_window
     selected_hours = hour_options[hour_options.index(start_hour) : hour_options.index(end_hour) + 1]
     st.divider()
-    st.subheader(f"{main_metric} ao longo do ciclo")
     st.altair_chart(
-        continuous_phase_chart(
+        main_cycle_chart(
+            active_cycle,
             selected_cycles,
             data,
-            main_metric,
+            visible_main_metrics,
             selected_hours,
         ),
+        width="stretch",
+    )
+
+    st.subheader("Perda de peso acumulada")
+    st.caption(
+        "Comparação minuto a minuto até 7 °C: linha contínua em percentual e tracejada em kg."
+    )
+    st.altair_chart(
+        weight_loss_comparison_chart(selected_cycles, data, selected_hours),
         width="stretch",
     )
 
@@ -479,7 +501,8 @@ def main() -> None:
     report_signature = (
         tuple(selected_labels),
         tuple(selected_bar_metrics),
-        main_metric,
+        active_label,
+        tuple(visible_main_metrics),
         tuple(selected_hours),
     )
     st.divider()
@@ -490,7 +513,8 @@ def main() -> None:
                 st.session_state["thoms_pdf"] = build_dashboard_pdf(
                     selected_cycles=selected_cycles,
                     data=data,
-                    main_metric=main_metric,
+                    active_cycle=active_cycle,
+                    main_metrics=visible_main_metrics,
                     bar_metrics=selected_bar_metrics,
                     selected_hours=selected_hours,
                     logo_path=BRAND_LOGO,

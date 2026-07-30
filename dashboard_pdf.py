@@ -28,10 +28,15 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from dashboard_charts import continuous_phase_chart, hourly_metric_chart
+from dashboard_charts import (
+    hourly_metric_chart,
+    main_cycle_chart,
+    weight_loss_comparison_chart,
+)
 from thoms_dashboard_data import (
     Cycle,
     cycle_metrics,
+    cycle_weight_quality,
 )
 
 
@@ -256,7 +261,8 @@ def build_dashboard_pdf(
     *,
     selected_cycles: list[Cycle],
     data: pd.DataFrame,
-    main_metric: str,
+    active_cycle: Cycle,
+    main_metrics: list[str],
     bar_metrics: list[str],
     selected_hours: list[str],
     logo_path: Path,
@@ -287,7 +293,7 @@ def build_dashboard_pdf(
         Paragraph(
             f"Gerado em {generated_at:%d/%m/%Y às %H:%M} | "
             f"Janela: {selected_hours[0]} a {selected_hours[-1]} | "
-            f"Gráfico contínuo: {main_metric}",
+            f"Ciclo ativo: {active_cycle.label}",
             styles["ThomsSmall"],
         )
     )
@@ -310,26 +316,52 @@ def build_dashboard_pdf(
     story.append(Spacer(1, 3 * mm))
     story.append(detail_table)
 
+    active_index = selected_cycles.index(active_cycle) + 1
     story.append(PageBreak())
     story.append(
         Paragraph(
-            f"{main_metric} - carregamento e resfriamento até a meta",
+            f"Análise principal - Ciclo {active_index}",
             styles["ThomsHeading"],
         )
     )
     story.append(
         _chart_image(
-            continuous_phase_chart(
+            main_cycle_chart(
+                active_cycle,
                 selected_cycles,
                 data,
-                main_metric,
+                main_metrics,
                 selected_hours,
-                horizontal=True,
+                interactive=False,
             ),
+            usable_width,
+            maximum_height=155 * mm,
+        )
+    )
+
+    story.append(PageBreak())
+    story.append(Paragraph("Perda de peso acumulada", styles["ThomsHeading"]))
+    story.append(
+        _chart_image(
+            weight_loss_comparison_chart(selected_cycles, data, selected_hours),
             usable_width,
             maximum_height=135 * mm,
         )
     )
+    suspicious_cycles = [
+        f"Ciclo {index + 1}"
+        for index, cycle in enumerate(selected_cycles)
+        if cycle_weight_quality(data, cycle).suspect
+    ]
+    if suspicious_cycles:
+        story.append(
+            Paragraph(
+                "Qualidade do peso: "
+                + ", ".join(suspicious_cycles)
+                + " possui salto acima de 5 kg/min antes de 7 °C e fica fora do ranking de perda.",
+                styles["ThomsSmall"],
+            )
+        )
 
     for metric in bar_metrics:
         story.append(PageBreak())
@@ -361,8 +393,9 @@ def build_dashboard_pdf(
                     "C = carregamento; R = resfriamento até a primeira leitura do "
                     "espeto menor ou igual a 7 °C; P = resfriamento pós-meta. "
                     "Horas com menos de 45 minutos de cobertura são parciais. "
-                    "O ranking combina, em partes iguais, tempo até 7 °C e perda "
-                    "de peso; ciclos sem meta ou com perda negativa ficam fora.",
+                    "Peso válido: acima de 50 kg e até 300 kg. Saltos acima de 5 kg/min "
+                    "entre a referência e 7 °C deixam o ciclo fora do ranking de perda. "
+                    "O ranking combina, em partes iguais, tempo até 7 °C e perda de peso.",
                     styles["ThomsBody"],
                 ),
             ]

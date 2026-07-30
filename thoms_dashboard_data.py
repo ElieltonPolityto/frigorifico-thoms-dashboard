@@ -21,7 +21,9 @@ REQUIRED_COLUMNS = {
 
 DATA_COMPLETENESS_MIN = 0.95
 MAX_CONTINUOUS_GAP_MINUTES = 5
-MIN_VALID_WEIGHT_KG = 90
+MIN_VALID_WEIGHT_KG = 50.0
+MAX_VALID_WEIGHT_KG = 300.0
+MAX_WEIGHT_STEP_KG_PER_MINUTE = 5.0
 OPERATIONAL_CYCLE_CUTOFF_HOUR = 11
 WEEKDAY_ABBREVIATIONS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
 TARGET_ESPETO_C = 7.0
@@ -47,6 +49,15 @@ class Cycle:
     label: str
 
 
+@dataclass(frozen=True)
+class WeightQuality:
+    """Quality result for the weight-loss window of one cycle."""
+
+    suspect: bool
+    events: tuple[pd.Timestamp, ...]
+    max_step_kg: float | None
+
+
 def _first_time_at_or_below_7(frame: pd.DataFrame, cooling_start: pd.Timestamp) -> pd.Timestamp | None:
     """Return the first espeto sample at or below 7 C during cooling."""
     espeto = frame[REQUIRED_COLUMNS["Espeto"]]
@@ -57,16 +68,17 @@ def _first_time_at_or_below_7(frame: pd.DataFrame, cooling_start: pd.Timestamp) 
     return None if reached.empty else reached.iloc[0]
 
 
-def _positive_weights(frame: pd.DataFrame) -> pd.Series:
-    """Zero or negative weights do not represent a valid scale reading."""
+def valid_weight_series(frame: pd.DataFrame) -> pd.Series:
+    """Return valid process-weight readings without mutating raw data."""
     weight = frame[REQUIRED_COLUMNS["Peso"]]
-    return weight.where(weight > 0)
+    return weight.where(
+        (weight > MIN_VALID_WEIGHT_KG) & (weight <= MAX_VALID_WEIGHT_KG)
+    )
 
 
 def _initial_loaded_weight(frame: pd.DataFrame) -> pd.Series:
-    """Return valid scale readings above the minimum loaded weight."""
-    positive_weight = _positive_weights(frame)
-    return positive_weight.where(positive_weight > MIN_VALID_WEIGHT_KG)
+    """Backward-compatible internal alias for valid process-weight readings."""
+    return valid_weight_series(frame)
 
 
 def _weight_reference_after_loading_peak(
@@ -237,9 +249,8 @@ def detect_valid_cycles(data: pd.DataFrame) -> list[Cycle]:
     return cycles
 
 
-def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
-    """Return one cycle with phase and hourly labels for a selected dashboard metric."""
-    source_column = REQUIRED_COLUMNS[metric]
+def _cycle_base_frame(data: pd.DataFrame, cycle: Cycle) -> pd.DataFrame:
+    """Return one cycle annotated with elapsed time and its three phases."""
     frame = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
     start_time = frame["timestamp"].iloc[0]
     cooling_time = data.at[cycle.cooling_index, "timestamp"]
@@ -266,18 +277,63 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
         frame["phase"].map(PHASE_PREFIX) + frame["phase_hour"].astype(str)
     )
 
+    return frame
+
+
+def weight_loss_frame(data: pd.DataFrame, cycle: Cycle) -> pd.DataFrame:
+    """Return minute-level weight loss from the reference sample through 7 C."""
+    frame = _cycle_base_frame(data, cycle)
+    cooling_time = data.at[cycle.cooling_index, "timestamp"]
+    reached_7_time = _first_time_at_or_below_7(frame, cooling_time)
+    reference = _weight_reference_after_loading_peak(frame, cooling_time)
+
+    frame["weight_kg"] = np.nan
+    frame["loss_kg"] = np.nan
+    frame["loss_pct"] = np.nan
+    frame["is_reference"] = False
+    frame["is_target"] = False
+
+    if reference is None or reached_7_time is None:
+        return frame
+
+    reference_time, reference_weight = reference
+    valid_weight = _initial_loaded_weight(frame)
+    within_loss_window = frame["timestamp"].between(reference_time, reached_7_time)
+    frame["weight_kg"] = valid_weight.where(within_loss_window)
+    frame["loss_kg"] = reference_weight - frame["weight_kg"]
+    frame["loss_pct"] = frame["loss_kg"] / reference_weight * 100
+    frame["is_reference"] = frame["timestamp"].eq(reference_time)
+    frame["is_target"] = frame["timestamp"].eq(reached_7_time)
+    return frame
+
+
+def cycle_weight_quality(data: pd.DataFrame, cycle: Cycle) -> WeightQuality:
+    """Flag abrupt consecutive-minute weight changes in the loss window."""
+    loss_frame = weight_loss_frame(data, cycle)
+    valid = loss_frame.dropna(subset=["weight_kg"])[["timestamp", "weight_kg"]].copy()
+    if valid.empty:
+        return WeightQuality(False, (), None)
+
+    steps = valid["weight_kg"].diff().abs()
+    consecutive_minutes = valid["timestamp"].diff().eq(pd.Timedelta(minutes=1))
+    abrupt = consecutive_minutes & steps.gt(MAX_WEIGHT_STEP_KG_PER_MINUTE)
+    events = tuple(pd.Timestamp(value) for value in valid.loc[abrupt, "timestamp"])
+    max_step = steps[consecutive_minutes].max()
+    return WeightQuality(
+        suspect=bool(events),
+        events=events,
+        max_step_kg=None if pd.isna(max_step) else float(max_step),
+    )
+
+
+def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
+    """Return one cycle with phase and hourly labels for a selected dashboard metric."""
+    source_column = REQUIRED_COLUMNS[metric]
+    frame = _cycle_base_frame(data, cycle)
+
     if metric == "Peso":
-        valid_weight = _initial_loaded_weight(frame)
-        reference = _weight_reference_after_loading_peak(frame, cooling_time)
-        if reference is None:
-            frame["value"] = np.nan
-            frame["unit"] = "% de perda acumulada"
-            return frame
-        reference_time, initial_weight = reference
-        valid_weight = valid_weight.where(frame["timestamp"] >= reference_time)
-        if reached_7_time is not None:
-            valid_weight = valid_weight.where(frame["timestamp"] <= reached_7_time)
-        frame["value"] = (initial_weight - valid_weight) / initial_weight * 100
+        loss_frame = weight_loss_frame(data, cycle)
+        frame["value"] = loss_frame["loss_pct"]
         frame["unit"] = "% de perda acumulada"
     else:
         frame["value"] = frame[source_column]
@@ -351,7 +407,7 @@ def hourly_phase_summary(
 def cycle_metrics(
     data: pd.DataFrame,
     cycle: Cycle,
-) -> dict[str, float | str]:
+) -> dict[str, float | str | bool | None]:
     """Calculate KPIs from the technical weight-reference rule."""
     frame = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
     cooling_start = data.at[cycle.cooling_index, "timestamp"]
@@ -382,6 +438,12 @@ def cycle_metrics(
         if initial_weight is not None and final_weight is not None
         else None
     )
+    loss_kg = (
+        initial_weight - final_weight
+        if initial_weight is not None and final_weight is not None
+        else None
+    )
+    weight_quality = cycle_weight_quality(data, cycle)
     return {
         "Duracao carga": (cooling_start - frame["timestamp"].iloc[0]).total_seconds() / 3600,
         "Duracao resfriamento": cooling_duration,
@@ -392,6 +454,10 @@ def cycle_metrics(
         "Hora referencia peso": reference[0] if reference is not None else None,
         "Peso final": final_weight,
         "Perda": loss,
+        "Perda absoluta": loss_kg,
+        "Peso suspeito": weight_quality.suspect,
+        "Eventos peso suspeito": len(weight_quality.events),
+        "Maior salto peso": weight_quality.max_step_kg,
         "Espeto inicial": float(initial_espeto.iloc[0]) if not initial_espeto.empty else None,
         "Espeto final": float(espeto.dropna().iloc[-1]),
         "Tempo ate 7 C": (
@@ -416,6 +482,7 @@ def rank_cycles(
             or loss is None
             or pd.isna(loss)
             or loss < 0
+            or bool(metrics["Peso suspeito"])
         ):
             continue
         rows.append(
@@ -472,7 +539,11 @@ def selection_insights(
     valid_loss = [
         record
         for record in records
-        if isinstance(record["Perda"], (int, float)) and record["Perda"] >= 0
+        if (
+            isinstance(record["Perda"], (int, float))
+            and record["Perda"] >= 0
+            and not bool(record["Peso suspeito"])
+        )
     ]
 
     if reached:
@@ -528,6 +599,18 @@ def selection_insights(
             "Perda de peso negativa em "
             + ", ".join(invalid_loss_names)
             + "; esses valores permanecem visíveis, mas não entram no ranking."
+        )
+
+    suspicious_weight_names = [
+        str(record["name"])
+        for record in records
+        if bool(record["Peso suspeito"])
+    ]
+    if suspicious_weight_names:
+        insights.append(
+            "Qualidade de peso requer revisao em "
+            + ", ".join(suspicious_weight_names)
+            + "; esses ciclos permanecem visiveis, mas ficam fora do ranking de perda."
         )
 
     return insights
