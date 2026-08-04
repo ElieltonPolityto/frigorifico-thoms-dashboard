@@ -1,6 +1,8 @@
 from pathlib import Path
 import unittest
 
+import pandas as pd
+
 from thoms_dashboard_data import (
     PHASE_LOADING,
     PHASE_POST_TARGET,
@@ -40,6 +42,14 @@ class DashboardDataIntegrationTests(unittest.TestCase):
         for phase in frame["phase"].unique():
             first = frame.loc[frame["phase"].eq(phase), "hours_from_phase_start"].iloc[0]
             self.assertAlmostEqual(float(first), 0.0, places=6)
+
+    def test_cycle_frame_reads_current_dt_directly_from_source(self):
+        cycle = self.cycles[0]
+        frame = cycle_frame(self.data, cycle, "DT_atual")
+        source = self.data.loc[cycle.start_index : cycle.end_index, "DT Atual"].reset_index(drop=True)
+
+        self.assertEqual(frame["unit"].iloc[0], "°C")
+        pd.testing.assert_series_equal(frame["value"].reset_index(drop=True), source, check_names=False)
 
     def test_phase_durations_reconcile_to_total_cycle(self):
         for cycle in self.cycles:

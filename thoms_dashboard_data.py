@@ -18,6 +18,10 @@ REQUIRED_COLUMNS = {
     "Peso": "Peso atual",
     "Retorno de ar": "Temp retorno ar",
 }
+AUXILIARY_COLUMNS = {
+    "DT_atual": "DT Atual",
+}
+METRIC_COLUMNS = {**REQUIRED_COLUMNS, **AUXILIARY_COLUMNS}
 
 DATA_COMPLETENESS_MIN = 0.95
 MAX_CONTINUOUS_GAP_MINUTES = 5
@@ -165,12 +169,12 @@ def load_supervision_data(data_folder: Path) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    required = set(REQUIRED_COLUMNS.values()) | {"Carregamento", "Resfriamento"}
+    required = set(METRIC_COLUMNS.values()) | {"Carregamento", "Resfriamento"}
     missing_columns = sorted(required - set(data.columns))
     if missing_columns:
         raise ValueError(f"Colunas obrigatorias ausentes: {', '.join(missing_columns)}")
 
-    for column in REQUIRED_COLUMNS.values():
+    for column in METRIC_COLUMNS.values():
         data[column] = pd.to_numeric(
             data[column]
             .astype(str)
@@ -328,7 +332,7 @@ def cycle_weight_quality(data: pd.DataFrame, cycle: Cycle) -> WeightQuality:
 
 def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
     """Return one cycle with phase and hourly labels for a selected dashboard metric."""
-    source_column = REQUIRED_COLUMNS[metric]
+    source_column = METRIC_COLUMNS[metric]
     frame = _cycle_base_frame(data, cycle)
 
     if metric == "Peso":
@@ -340,6 +344,7 @@ def cycle_frame(data: pd.DataFrame, cycle: Cycle, metric: str) -> pd.DataFrame:
         frame["unit"] = {
             "Espeto": "°C",
             "DT_ref": "°C",
+            "DT_atual": "°C",
             "Umidade": "%",
             "Ventilacao": "%",
             "Glicol": "°C",

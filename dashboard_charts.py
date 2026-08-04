@@ -26,6 +26,7 @@ MAIN_METRIC_COLORS = {
     "Ventilacao": "#0072B2",
     "Umidade": "#00796B",
     "Peso": "#6F4C9B",
+    "DT_atual": "#B65C8A",
 }
 MAIN_METRIC_LABELS = {
     "Retorno de ar": "Retorno do ar",
@@ -33,6 +34,7 @@ MAIN_METRIC_LABELS = {
     "Ventilacao": "Ventilacao",
     "Umidade": "Umidade relativa",
     "Peso": "Peso atual",
+    "DT_atual": "DT Atual",
 }
 MAIN_METRIC_ORDER = ("Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso")
 BAR_PHASE_ORDER = (PHASE_LOADING, PHASE_TO_TARGET)
@@ -387,13 +389,14 @@ def main_cycle_chart(
     if base.empty:
         return _empty_main_chart("A janela selecionada nao possui dados para o ciclo ativo.")
 
+    chart_metrics = visible + (("DT_atual",) if "Ventilacao" in visible else ())
     series = {
         metric: _main_metric_frame(data, active_cycle, metric).loc[
             lambda frame: frame["hour_label"].isin(selected_hours)
         ].copy()
-        for metric in visible
+        for metric in chart_metrics
     }
-    tooltip_frame = _main_tooltip_frame(data, active_cycle, visible, selected_hours)
+    tooltip_frame = _main_tooltip_frame(data, active_cycle, chart_metrics, selected_hours)
     hover = (
         alt.selection_point(
             name="hover_main_cycle",
@@ -429,7 +432,7 @@ def main_cycle_chart(
         alt.Tooltip("phase:N", title="Fase"),
         alt.Tooltip("hour_label:N", title="Hora da fase"),
     ]
-    for metric in visible:
+    for metric in chart_metrics:
         tooltip_fields.append(
             alt.Tooltip(
                 f"{MAIN_METRIC_LABELS[metric]}:Q",
@@ -452,7 +455,78 @@ def main_cycle_chart(
             if len(metrics) > 1
             else None
         )
-        if metrics == ("Peso",):
+        if metrics == ("Ventilacao", "DT_atual"):
+            ventilation_data = series["Ventilacao"]
+            dt_data = series["DT_atual"]
+            layers.extend(
+                [
+                    (
+                        alt.Chart(ventilation_data)
+                        .mark_line(strokeWidth=2.4, interpolate="step-after")
+                        .encode(
+                            x=x,
+                            y=alt.Y(
+                                "value:Q",
+                                title="Ventilacao (%)",
+                                scale=alt.Scale(domain=[0, 100], zero=True),
+                                axis=alt.Axis(
+                                    titleColor=MAIN_METRIC_COLORS["Ventilacao"],
+                                    labelColor=MAIN_METRIC_COLORS["Ventilacao"],
+                                ),
+                            ),
+                            color=alt.value(MAIN_METRIC_COLORS["Ventilacao"]),
+                            tooltip=[
+                                alt.Tooltip("value:Q", title="Ventilacao (%)", format=".2f"),
+                                alt.Tooltip(
+                                    "timestamp:T",
+                                    title="Data e hora",
+                                    format="%d/%m/%Y %H:%M",
+                                ),
+                            ],
+                        )
+                    ),
+                    (
+                        alt.Chart(dt_data)
+                        .mark_line(strokeWidth=2.2)
+                        .encode(
+                            x=x,
+                            y=alt.Y(
+                                "value:Q",
+                                title="DT Atual (°C)",
+                                scale=alt.Scale(zero=False, nice=True),
+                                axis=alt.Axis(
+                                    orient="right",
+                                    titleColor=MAIN_METRIC_COLORS["DT_atual"],
+                                    labelColor=MAIN_METRIC_COLORS["DT_atual"],
+                                ),
+                            ),
+                            color=alt.Color(
+                                "metric_label:N",
+                                scale=alt.Scale(
+                                    domain=[
+                                        MAIN_METRIC_LABELS["Ventilacao"],
+                                        MAIN_METRIC_LABELS["DT_atual"],
+                                    ],
+                                    range=[
+                                        MAIN_METRIC_COLORS["Ventilacao"],
+                                        MAIN_METRIC_COLORS["DT_atual"],
+                                    ],
+                                ),
+                                legend=alt.Legend(orient="top", title=None),
+                            ),
+                            tooltip=[
+                                alt.Tooltip("value:Q", title="DT Atual (°C)", format=".2f"),
+                                alt.Tooltip(
+                                    "timestamp:T",
+                                    title="Data e hora",
+                                    format="%d/%m/%Y %H:%M",
+                                ),
+                            ],
+                        )
+                    ),
+                ]
+            )
+        elif metrics == ("Peso",):
             weight_data = series["Peso"]
             loss_data = weight_data[weight_data["is_hourly_loss"]].copy()
             weight_data["weight_plot_kg"] = weight_data["value"]
@@ -625,10 +699,14 @@ def main_cycle_chart(
             if metrics == ("Peso",)
             else None
         )
-        chart = alt.layer(*layers).properties(width=850, height=height)
+        chart = alt.layer(*layers).properties(width=760, height=height)
         if panel_title is not None:
             chart = chart.properties(title=panel_title)
-        chart = chart.resolve_scale(color="independent")
+        chart = (
+            chart.resolve_scale(color="independent", y="independent")
+            if metrics == ("Ventilacao", "DT_atual")
+            else chart.resolve_scale(color="independent")
+        )
         return chart.add_params(hover, focus) if hover is not None and focus is not None else chart
 
     panels: list[alt.TopLevelMixin] = []
@@ -636,7 +714,7 @@ def main_cycle_chart(
     if temperature_metrics:
         panels.append(panel(temperature_metrics, "Temperatura (C)", [-10, 50], 170))
     if "Ventilacao" in visible:
-        panels.append(panel(("Ventilacao",), "Ventilacao (%)", [0, 100], 125))
+        panels.append(panel(("Ventilacao", "DT_atual"), "Ventilacao (%)", [0, 100], 140))
     if "Umidade" in visible:
         panels.append(panel(("Umidade",), "Umidade relativa (%)", [92, 100], 125))
     if "Peso" in visible:
