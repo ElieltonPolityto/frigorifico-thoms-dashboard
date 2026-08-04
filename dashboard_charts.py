@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import altair as alt
 import pandas as pd
 
@@ -420,10 +422,12 @@ def main_cycle_chart(
         if interactive
         else None
     )
+    x_domain_max = max(1, math.ceil(float(base["hours_from_cycle_start"].max())))
     x = alt.X(
         "hours_from_cycle_start:Q",
         title="Horas desde o inicio do ciclo",
         axis=alt.Axis(tickMinStep=1),
+        scale=alt.Scale(domain=[0, x_domain_max], nice=False),
     )
     phase_layer = _phase_background(base)
     marker_layer = _phase_markers(base)

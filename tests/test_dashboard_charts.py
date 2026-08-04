@@ -121,9 +121,11 @@ class HourlyMetricChartTests(unittest.TestCase):
 
         self.assertEqual(len(spec["vconcat"]), 4)
         temperature_y = spec["vconcat"][0]["layer"][2]["encoding"]["y"]
+        temperature_x = spec["vconcat"][0]["layer"][2]["encoding"]["x"]
         ventilation_y = spec["vconcat"][1]["layer"][2]["encoding"]["y"]
         humidity_y = spec["vconcat"][2]["layer"][2]["encoding"]["y"]
         self.assertEqual(temperature_y["scale"]["domain"], [-10, 50])
+        self.assertEqual(temperature_x["scale"], {"domain": [0, 25], "nice": False})
         self.assertEqual(ventilation_y["scale"]["domain"], [0, 100])
         self.assertEqual(humidity_y["scale"]["domain"], [92, 100])
         self.assertEqual(humidity_y["title"], "Umidade relativa (%)")
