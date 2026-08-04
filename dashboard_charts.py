@@ -444,6 +444,14 @@ def main_cycle_chart(
 
     def panel(metrics: tuple[str, ...], title: str, domain: list[float] | None, height: int):
         layers: list[alt.TopLevelMixin] = [phase_layer, marker_layer]
+        metric_color_scale = (
+            alt.Scale(
+                domain=[MAIN_METRIC_LABELS[metric] for metric in metrics],
+                range=[MAIN_METRIC_COLORS[metric] for metric in metrics],
+            )
+            if len(metrics) > 1
+            else None
+        )
         if metrics == ("Peso",):
             weight_data = series["Peso"]
             loss_data = weight_data[weight_data["is_hourly_loss"]].copy()
@@ -519,7 +527,52 @@ def main_cycle_chart(
                 ]
             )
         else:
-            for metric in metrics:
+            if len(metrics) > 1:
+                metric_data = pd.concat([series[metric] for metric in metrics], ignore_index=True)
+                layers.append(
+                    alt.Chart(metric_data)
+                    .mark_line()
+                    .encode(
+                        x=x,
+                        y=alt.Y(
+                            "value:Q",
+                            title=title,
+                            scale=alt.Scale(domain=domain, zero=False)
+                            if domain
+                            else alt.Scale(zero=False),
+                        ),
+                        color=alt.Color(
+                            "metric_label:N",
+                            scale=metric_color_scale,
+                            legend=alt.Legend(orient="top", title=None),
+                        ),
+                        detail="metric:N",
+                        strokeWidth=alt.StrokeWidth(
+                            "metric:N",
+                            scale=alt.Scale(
+                                domain=list(metrics),
+                                range=[3.3 if metric == "Espeto" else 2.4 for metric in metrics],
+                            ),
+                            legend=None,
+                        ),
+                        opacity=(
+                            alt.condition(focus, alt.value(1), alt.value(0.22))
+                            if focus is not None
+                            else alt.value(1)
+                        ),
+                        tooltip=[
+                            alt.Tooltip("metric_label:N", title="Variavel"),
+                            alt.Tooltip("value:Q", title=title, format=".2f"),
+                            alt.Tooltip(
+                                "timestamp:T",
+                                title="Data e hora",
+                                format="%d/%m/%Y %H:%M",
+                            ),
+                        ],
+                    )
+                )
+            else:
+                metric = metrics[0]
                 metric_data = series[metric]
                 line = (
                     alt.Chart(metric_data)

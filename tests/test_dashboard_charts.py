@@ -6,6 +6,7 @@ from pathlib import Path
 import unittest
 
 from dashboard_charts import (
+    MAIN_METRIC_COLORS,
     continuous_phase_chart,
     hourly_metric_chart,
     main_cycle_chart,
@@ -126,6 +127,21 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertEqual(ventilation_y["scale"]["domain"], [0, 100])
         self.assertEqual(humidity_y["scale"]["domain"], [92, 100])
         self.assertEqual(humidity_y["title"], "Umidade relativa (%)")
+
+        temperature_colors = [
+            layer["encoding"]["color"]
+            for layer in spec["vconcat"][0]["layer"]
+            if layer.get("mark", {}).get("type") == "line"
+        ]
+        self.assertEqual(len(temperature_colors), 1)
+        for color in temperature_colors:
+            self.assertEqual(color["field"], "metric_label")
+            self.assertEqual(color["legend"], {"orient": "top", "title": None})
+            self.assertEqual(color["scale"]["domain"], ["Retorno do ar", "Espeto"])
+            self.assertEqual(
+                color["scale"]["range"],
+                [MAIN_METRIC_COLORS["Retorno de ar"], MAIN_METRIC_COLORS["Espeto"]],
+            )
 
         weight_layers = spec["vconcat"][3]["layer"]
         self.assertEqual(weight_layers[2]["encoding"]["y"]["title"], "")
