@@ -422,11 +422,12 @@ def main_cycle_chart(
         if interactive
         else None
     )
-    x_domain_max = max(1, math.ceil(float(base["hours_from_cycle_start"].max())))
+    x_tick_max = max(1, math.ceil(float(base["hours_from_cycle_start"].max())))
+    x_domain_max = x_tick_max + 0.75
     x = alt.X(
         "hours_from_cycle_start:Q",
         title="Horas desde o inicio do ciclo",
-        axis=alt.Axis(tickMinStep=1),
+        axis=alt.Axis(tickMinStep=1, values=list(range(x_tick_max + 1))),
         scale=alt.Scale(domain=[0, x_domain_max], nice=False),
     )
     phase_layer = _phase_background(base)
