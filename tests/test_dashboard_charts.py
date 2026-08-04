@@ -209,6 +209,19 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertEqual(spec["layer"][2]["encoding"]["y"]["title"], "Perda acumulada (kg)")
         self.assertEqual(spec["layer"][2]["encoding"]["y"]["axis"]["orient"], "right")
 
+    def test_main_weight_target_label_includes_percentage_loss(self):
+        cycle = next(cycle for cycle in self.cycles if cycle.label.startswith("02/06/2026"))
+        chart = main_cycle_chart(
+            cycle,
+            [cycle],
+            self.data,
+            ["Peso"],
+            list(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique()),
+            interactive=False,
+        )
+
+        self.assertIn("Aos 7 °C 121,8 kg · perda 1,69%", chart.to_json())
+
 
 if __name__ == "__main__":
     unittest.main()

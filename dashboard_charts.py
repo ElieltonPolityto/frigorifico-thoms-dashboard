@@ -346,8 +346,13 @@ def _main_weight_frame(data: pd.DataFrame, cycle: Cycle) -> pd.DataFrame:
         reference_mask, "weight_kg"
     ].map(lambda value: f"Referência {value:.1f} kg")
     result.loc[target_mask, "weight_event_label"] = result.loc[
-        target_mask, "weight_kg"
-    ].map(lambda value: f"Aos 7 °C {value:.1f} kg")
+        target_mask, ["weight_kg", "loss_pct"]
+    ].apply(
+        lambda row: (
+            f"Aos 7 °C {row['weight_kg']:.1f} kg · perda {row['loss_pct']:.2f}%"
+        ).replace(".", ","),
+        axis=1,
+    )
     return result
 
 
