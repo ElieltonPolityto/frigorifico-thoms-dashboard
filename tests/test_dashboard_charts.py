@@ -138,9 +138,13 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertEqual(len(ventilation_lines), 2)
         self.assertEqual(ventilation_lines[0]["encoding"]["y"]["title"], "Ventilacao (%)")
         self.assertEqual(ventilation_lines[0]["encoding"]["y"]["scale"]["domain"], [0, 100])
-        self.assertEqual(ventilation_lines[1]["encoding"]["y"]["title"], "DT Atual (°C)")
+        self.assertIsNone(ventilation_lines[1]["encoding"]["y"]["title"])
         self.assertEqual(ventilation_lines[1]["encoding"]["y"]["axis"]["orient"], "right")
         self.assertEqual(ventilation_lines[1]["encoding"]["y"]["axis"]["labelAlign"], "right")
+        self.assertEqual(
+            ventilation_lines[1]["encoding"]["y"]["axis"]["labelExpr"],
+            "datum.label + ' °C'",
+        )
         self.assertEqual(
             ventilation_lines[1]["encoding"]["color"]["scale"]["domain"],
             ["Ventilacao", "DT Atual"],

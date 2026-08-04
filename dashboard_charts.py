@@ -496,15 +496,14 @@ def main_cycle_chart(
                             x=x,
                             y=alt.Y(
                                 "value:Q",
-                                title="DT Atual (°C)",
+                                title=None,
                                 scale=alt.Scale(zero=False, nice=True),
                                 axis=alt.Axis(
                                     orient="right",
-                                    titleColor=MAIN_METRIC_COLORS["DT_atual"],
                                     labelColor=MAIN_METRIC_COLORS["DT_atual"],
                                     labelAlign="right",
                                     labelPadding=-8,
-                                    titlePadding=-42,
+                                    labelExpr="datum.label + ' °C'",
                                 ),
                             ),
                             color=alt.Color(
