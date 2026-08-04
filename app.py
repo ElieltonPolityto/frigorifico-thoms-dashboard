@@ -28,6 +28,7 @@ from thoms_dashboard_data import (
 
 
 DATA_FOLDER = Path(__file__).parent / "dados_entrada"
+DATA_SCHEMA_VERSION = "dt-atual-v1"
 BRAND_LOGO = Path(__file__).parent / "static" / "brand" / "plotter-racks-logo-blue.png"
 COLORS = CYCLE_COLORS
 METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol", "Retorno de ar"]
@@ -62,9 +63,9 @@ st.markdown(
 
 
 @st.cache_data(show_spinner="Lendo e validando os CSVs...")
-def load_dashboard_data(folder: str, folder_mtime: float) -> pd.DataFrame:
+def load_dashboard_data(folder: str, folder_mtime: float, schema_version: str) -> pd.DataFrame:
     """Cache deterministic file reads while invalidating when a CSV changes."""
-    del folder_mtime
+    del folder_mtime, schema_version
     return load_supervision_data(Path(folder))
 
 
@@ -351,7 +352,7 @@ def main() -> None:
 
     try:
         data_folder_mtime = folder_last_modified(DATA_FOLDER)
-        data = load_dashboard_data(str(DATA_FOLDER), data_folder_mtime)
+        data = load_dashboard_data(str(DATA_FOLDER), data_folder_mtime, DATA_SCHEMA_VERSION)
         cycles = detect_valid_cycles(data)
         ranking = rank_cycles(data, cycles)
     except (FileNotFoundError, ValueError) as error:
