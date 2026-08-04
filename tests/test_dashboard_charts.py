@@ -169,13 +169,26 @@ class HourlyMetricChartTests(unittest.TestCase):
             )
 
         weight_layers = spec["vconcat"][3]["layer"]
-        self.assertEqual(weight_layers[2]["encoding"]["y"]["title"], "")
-        self.assertIsNone(weight_layers[3]["encoding"]["y"]["title"])
-        self.assertEqual(weight_layers[3]["encoding"]["y"]["field"], "weight_plot_kg")
-        self.assertNotIn("axis", weight_layers[3]["encoding"]["y"])
+        self.assertEqual(weight_layers[2]["mark"]["type"], "line")
+        self.assertEqual(weight_layers[2]["mark"]["opacity"], 0.32)
+        self.assertEqual(weight_layers[2]["encoding"]["y"]["field"], "weight_kg")
+        self.assertEqual(weight_layers[2]["encoding"]["y"]["title"], "Peso (kg)")
+        self.assertEqual(weight_layers[3]["mark"]["type"], "line")
+        self.assertEqual(weight_layers[3]["encoding"]["y"]["field"], "weight_trend_kg")
+        self.assertIsNone(weight_layers[3]["encoding"]["y"]["axis"])
+        encoded_y_fields = {
+            layer["encoding"]["y"].get("field")
+            for layer in weight_layers
+            if "encoding" in layer and "y" in layer["encoding"]
+        }
+        self.assertNotIn("loss_display_kg", encoded_y_fields)
+        self.assertEqual(
+            [layer["mark"]["type"] for layer in weight_layers].count("point"),
+            2,
+        )
         self.assertEqual(
             spec["vconcat"][3]["title"]["text"],
-            "Peso até 7 °C (kg) · pontos azuis: perda acumulada por hora (%)",
+            "Peso medido até 7 °C (kg) · escala ampliada · sem peso válido no instante de 7 °C",
         )
 
     def test_weight_loss_chart_combines_percentage_and_kg_in_one_panel(self):

@@ -327,29 +327,27 @@ def _main_weight_frame(data: pd.DataFrame, cycle: Cycle) -> pd.DataFrame:
         target_timestamp = target_rows["timestamp"].min()
         result.loc[result["timestamp"].gt(target_timestamp), "weight_kg"] = pd.NA
 
-    loss = weight_loss_frame(data, cycle)[["timestamp", "loss_pct"]]
-    result["loss_pct"] = result["timestamp"].map(loss.set_index("timestamp")["loss_pct"])
-    result["is_hourly_loss"] = False
-    hourly_rows = result.dropna(subset=["loss_pct"]).groupby("hour_label", sort=False).tail(1)
-    result.loc[hourly_rows.index, "is_hourly_loss"] = True
+    loss = weight_loss_frame(data, cycle)[
+        ["timestamp", "loss_kg", "loss_pct", "is_reference", "is_target"]
+    ].set_index("timestamp")
+    for column in ("loss_kg", "loss_pct", "is_reference", "is_target"):
+        result[column] = result["timestamp"].map(loss[column])
 
-    # O percentual horario aparece no mesmo painel, mas sem criar um segundo
-    # eixo Y concorrente. A coordenada abaixo e apenas visual: ela reserva uma
-    # faixa baixa do grafico de peso; o valor percentual real permanece no
-    # tooltip dos pontos azuis.
-    result["loss_display_kg"] = pd.NA
-    weight_values = result["weight_kg"].dropna()
-    loss_values = result["loss_pct"].dropna()
-    if not weight_values.empty and not loss_values.empty:
-        weight_low = float(weight_values.min())
-        weight_span = max(float(weight_values.max()) - weight_low, 1.0)
-        band_low = weight_low + (weight_span * 0.08)
-        band_high = weight_low + (weight_span * 0.34)
-        loss_low = float(loss_values.min())
-        loss_span = max(float(loss_values.max()) - loss_low, 0.01)
-        result["loss_display_kg"] = band_low + (
-            (result["loss_pct"] - loss_low) / loss_span * (band_high - band_low)
-        )
+    result["weight_trend_kg"] = (
+        result["weight_kg"]
+        .rolling(window=5, center=True, min_periods=1)
+        .median()
+        .where(result["weight_kg"].notna())
+    )
+    result["weight_event_label"] = pd.NA
+    reference_mask = result["is_reference"].fillna(False) & result["weight_kg"].notna()
+    target_mask = result["is_target"].fillna(False) & result["weight_kg"].notna()
+    result.loc[reference_mask, "weight_event_label"] = result.loc[
+        reference_mask, "weight_kg"
+    ].map(lambda value: f"Referência {value:.1f} kg")
+    result.loc[target_mask, "weight_event_label"] = result.loc[
+        target_mask, "weight_kg"
+    ].map(lambda value: f"Aos 7 °C {value:.1f} kg")
     return result
 
 
@@ -452,6 +450,7 @@ def main_cycle_chart(
 
     def panel(metrics: tuple[str, ...], title: str, domain: list[float] | None, height: int):
         layers: list[alt.TopLevelMixin] = [phase_layer, marker_layer]
+        weight_panel_title: str | None = None
         metric_color_scale = (
             alt.Scale(
                 domain=[MAIN_METRIC_LABELS[metric] for metric in metrics],
@@ -535,78 +534,156 @@ def main_cycle_chart(
             )
         elif metrics == ("Peso",):
             weight_data = series["Peso"]
-            loss_data = weight_data[weight_data["is_hourly_loss"]].copy()
-            weight_data["weight_plot_kg"] = weight_data["value"]
-            loss_data["weight_plot_kg"] = loss_data["loss_display_kg"]
-            loss_data["metric"] = "Perda acumulada (%)"
-            loss_data["metric_label"] = "Perda acumulada (%)"
+            reference_data = weight_data[
+                weight_data["is_reference"].fillna(False) & weight_data["weight_kg"].notna()
+            ].copy()
+            target_data = weight_data[
+                weight_data["is_target"].fillna(False) & weight_data["weight_kg"].notna()
+            ].copy()
+            weight_panel_title = "Peso medido até 7 °C (kg) · escala ampliada"
+            if not target_data.empty and target_data["loss_kg"].notna().any():
+                loss_kg = float(target_data["loss_kg"].dropna().iloc[-1])
+                loss_pct = float(target_data["loss_pct"].dropna().iloc[-1])
+                loss_label = f"{loss_kg:.2f} kg ({loss_pct:.2f}%)".replace(".", ",")
+                weight_panel_title += f" · perda: {loss_label}"
+            else:
+                weight_panel_title += " · sem peso válido no instante de 7 °C"
             layers.extend(
                 [
                     (
                         alt.Chart(weight_data)
-                        .mark_line(strokeWidth=2.5)
+                        .mark_line(strokeWidth=1.0, opacity=0.32)
                         .encode(
                             x=x,
                             y=alt.Y(
-                                "weight_plot_kg:Q",
-                                title="",
+                                "weight_kg:Q",
+                                title="Peso (kg)",
                                 axis=alt.Axis(
                                     labelColor=MAIN_METRIC_COLORS["Peso"],
                                     labelPadding=2,
-                                    tickCount=4,
+                                    tickCount=5,
                                 ),
                                 scale=alt.Scale(zero=False, nice=True),
                             ),
                             color=alt.value(MAIN_METRIC_COLORS["Peso"]),
-                            detail="metric:N",
-                            opacity=(
-                                alt.condition(focus, alt.value(1), alt.value(0.22))
-                                if focus is not None
-                                else alt.value(1)
-                            ),
                             tooltip=[
-                                alt.Tooltip("value:Q", title="Peso atual (kg)", format=".2f"),
+                                alt.Tooltip("weight_kg:Q", title="Peso bruto (kg)", format=".2f"),
                                 alt.Tooltip("timestamp:T", title="Data e hora", format="%d/%m/%Y %H:%M"),
                             ],
                         )
                     ),
                     (
-                        alt.Chart(loss_data)
-                        .mark_line(strokeWidth=2.1, strokeDash=[5, 3])
+                        alt.Chart(weight_data)
+                        .mark_line(strokeWidth=2.7)
                         .encode(
                             x=x,
                             y=alt.Y(
-                                "weight_plot_kg:Q",
+                                "weight_trend_kg:Q",
                                 title=None,
+                                axis=None,
                                 scale=alt.Scale(zero=False, nice=True),
                             ),
-                            color=alt.value("#3CAAFB"),
-                            detail="metric:N",
+                            color=alt.value(MAIN_METRIC_COLORS["Peso"]),
                             opacity=(
                                 alt.condition(focus, alt.value(1), alt.value(0.22))
                                 if focus is not None
                                 else alt.value(1)
                             ),
                             tooltip=[
-                                alt.Tooltip("loss_pct:Q", title="Perda acumulada (%)", format=".2f"),
-                                alt.Tooltip("hour_label:N", title="Hora da fase"),
+                                alt.Tooltip(
+                                    "weight_trend_kg:Q",
+                                    title="Tendência 5 min (kg)",
+                                    format=".2f",
+                                ),
+                                alt.Tooltip("timestamp:T", title="Data e hora", format="%d/%m/%Y %H:%M"),
                             ],
                         )
                     ),
                     (
-                        alt.Chart(loss_data)
-                        .mark_point(size=48, filled=True, color="#3CAAFB", stroke="white", strokeWidth=0.8)
+                        alt.Chart(reference_data)
+                        .mark_point(
+                            size=90,
+                            filled=True,
+                            color=MAIN_METRIC_COLORS["Retorno de ar"],
+                            stroke="white",
+                            strokeWidth=1.2,
+                        )
                         .encode(
                             x=x,
-                            y="weight_plot_kg:Q",
+                            y="weight_kg:Q",
                             tooltip=[
-                                alt.Tooltip("loss_pct:Q", title="Perda acumulada (%)", format=".2f"),
-                                alt.Tooltip("hour_label:N", title="Hora da fase"),
+                                alt.Tooltip("weight_event_label:N", title="Marco"),
+                                alt.Tooltip("timestamp:T", title="Data e hora", format="%d/%m/%Y %H:%M"),
                             ],
                         )
                     ),
+                    (
+                        alt.Chart(reference_data)
+                        .mark_text(
+                            align="left",
+                            dx=8,
+                            dy=-12,
+                            color=MAIN_METRIC_COLORS["Retorno de ar"],
+                            fontSize=11,
+                        )
+                        .encode(x=x, y="weight_kg:Q", text="weight_event_label:N")
+                    ),
+                    (
+                        alt.Chart(target_data)
+                        .mark_point(
+                            size=90,
+                            filled=True,
+                            color=MAIN_METRIC_COLORS["Espeto"],
+                            stroke="white",
+                            strokeWidth=1.2,
+                        )
+                        .encode(
+                            x=x,
+                            y="weight_kg:Q",
+                            tooltip=[
+                                alt.Tooltip("weight_event_label:N", title="Marco"),
+                                alt.Tooltip("loss_kg:Q", title="Perda (kg)", format=".2f"),
+                                alt.Tooltip("loss_pct:Q", title="Perda (%)", format=".2f"),
+                                alt.Tooltip("timestamp:T", title="Data e hora", format="%d/%m/%Y %H:%M"),
+                            ],
+                        )
+                    ),
+                    (
+                        alt.Chart(target_data)
+                        .mark_text(
+                            align="right",
+                            dx=-8,
+                            dy=14,
+                            color=MAIN_METRIC_COLORS["Espeto"],
+                            fontSize=11,
+                        )
+                        .encode(x=x, y="weight_kg:Q", text="weight_event_label:N")
+                    ),
                 ]
             )
+            post_target_rows = weight_data[weight_data["phase"].eq(PHASE_POST_TARGET)]
+            if not post_target_rows.empty:
+                target_hour = float(post_target_rows["hours_from_cycle_start"].min())
+                visible_end = float(weight_data["hours_from_cycle_start"].max())
+                weight_values = weight_data["weight_kg"].dropna()
+                if visible_end > target_hour and not weight_values.empty:
+                    post_target_note = pd.DataFrame(
+                        {
+                            "hours_from_cycle_start": [min(target_hour + 0.6, visible_end)],
+                            "weight_kg": [float(weight_values.median())],
+                            "label": ["Peso não considerado após 7 °C"],
+                        }
+                    )
+                    layers.append(
+                        alt.Chart(post_target_note)
+                        .mark_text(
+                            align="left",
+                            color="#6B7785",
+                            fontSize=11,
+                            fontStyle="italic",
+                        )
+                        .encode(x=x, y="weight_kg:Q", text="label:N")
+                    )
         else:
             if len(metrics) > 1:
                 metric_data = pd.concat([series[metric] for metric in metrics], ignore_index=True)
@@ -696,14 +773,17 @@ def main_cycle_chart(
             )
         panel_title = (
             alt.TitleParams(
-                text="Peso até 7 °C (kg) · pontos azuis: perda acumulada por hora (%)",
+                text=weight_panel_title,
                 anchor="start",
                 color="#51606F",
                 fontSize=12,
                 fontWeight="normal",
                 offset=5,
+                subtitle="Linha fina: leitura bruta · linha forte: tendência mediana de 5 min",
+                subtitleColor="#6B7785",
+                subtitleFontSize=10,
             )
-            if metrics == ("Peso",)
+            if weight_panel_title is not None
             else None
         )
         chart = alt.layer(*layers).properties(width=760, height=height)
@@ -725,7 +805,7 @@ def main_cycle_chart(
     if "Umidade" in visible:
         panels.append(panel(("Umidade",), "Umidade relativa (%)", [92, 100], 125))
     if "Peso" in visible:
-        panels.append(panel(("Peso",), "Peso atual (kg)", None, 155))
+        panels.append(panel(("Peso",), "Peso atual (kg)", None, 180))
 
     return alt.vconcat(*panels, spacing=6, padding={"right": 65}).resolve_scale(
         x="shared",
