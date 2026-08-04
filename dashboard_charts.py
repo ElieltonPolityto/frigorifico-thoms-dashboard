@@ -502,6 +502,9 @@ def main_cycle_chart(
                                     orient="right",
                                     titleColor=MAIN_METRIC_COLORS["DT_atual"],
                                     labelColor=MAIN_METRIC_COLORS["DT_atual"],
+                                    labelAlign="right",
+                                    labelPadding=-8,
+                                    titlePadding=-42,
                                 ),
                             ),
                             color=alt.Color(
@@ -724,7 +727,10 @@ def main_cycle_chart(
     if "Peso" in visible:
         panels.append(panel(("Peso",), "Peso atual (kg)", None, 155))
 
-    return alt.vconcat(*panels, spacing=6).resolve_scale(x="shared", y="independent")
+    return alt.vconcat(*panels, spacing=6, padding={"right": 65}).resolve_scale(
+        x="shared",
+        y="independent",
+    )
 
 
 def weight_loss_comparison_chart(

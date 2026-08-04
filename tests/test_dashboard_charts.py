@@ -140,11 +140,13 @@ class HourlyMetricChartTests(unittest.TestCase):
         self.assertEqual(ventilation_lines[0]["encoding"]["y"]["scale"]["domain"], [0, 100])
         self.assertEqual(ventilation_lines[1]["encoding"]["y"]["title"], "DT Atual (°C)")
         self.assertEqual(ventilation_lines[1]["encoding"]["y"]["axis"]["orient"], "right")
+        self.assertEqual(ventilation_lines[1]["encoding"]["y"]["axis"]["labelAlign"], "right")
         self.assertEqual(
             ventilation_lines[1]["encoding"]["color"]["scale"]["domain"],
             ["Ventilacao", "DT Atual"],
         )
         self.assertEqual(spec["vconcat"][1]["resolve"]["scale"]["y"], "independent")
+        self.assertEqual(spec["padding"], {"right": 65})
 
         temperature_colors = [
             layer["encoding"]["color"]

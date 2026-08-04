@@ -435,7 +435,7 @@ def main() -> None:
             visible_main_metrics,
             selected_hours,
         ),
-        width="content",
+        width="stretch",
     )
 
     st.subheader("Perda de peso acumulada")
