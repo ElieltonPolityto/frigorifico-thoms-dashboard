@@ -444,10 +444,6 @@ def main() -> None:
     )
 
     st.subheader("Perda de peso acumulada")
-    st.caption(
-        "Comparação minuto a minuto até 7 °C. A linha mostra a perda percentual; "
-        "quando há leitura válida na meta, o marcador final informa também a perda em kg."
-    )
     st.altair_chart(
         weight_loss_comparison_chart(selected_cycles, data, selected_hours),
         width="stretch",
