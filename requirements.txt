@@ -5,3 +5,4 @@ numpy>=1.26,<3
 Pillow>=10,<13
 reportlab>=4.2,<5
 vl-convert-python>=1.8,<2
+# Force a clean Streamlit Cloud rebuild after the 2026-08-05 data refresh.
