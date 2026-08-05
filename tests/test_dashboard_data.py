@@ -132,9 +132,9 @@ class DashboardDataIntegrationTests(unittest.TestCase):
         ]
         ranking = rank_cycles(self.data, self.cycles)
 
-        self.assertEqual(len(self.cycles), 25)
-        self.assertEqual(len(suspicious), 3)
-        self.assertEqual(len(ranking), 15)
+        self.assertEqual(len(self.cycles), 42)
+        self.assertEqual(len(suspicious), 8)
+        self.assertEqual(len(ranking), 27)
         self.assertTrue(ranking["label"].isin([cycle.label for cycle in suspicious]).sum() == 0)
 
 
