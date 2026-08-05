@@ -60,7 +60,7 @@ class HourlyMetricChartTests(unittest.TestCase):
         for cycle in selected_cycles:
             selected_hours.extend(cycle_frame(self.data, cycle, "Espeto")["hour_label"].unique())
 
-        for metric in ("Peso", "DT_ref", "Umidade", "Glicol", "Retorno de ar"):
+        for metric in ("DT_ref", "Umidade", "Glicol", "Retorno de ar"):
             chart = hourly_metric_chart(selected_cycles, self.data, metric, selected_hours)
             spec = chart.to_dict()
 
@@ -70,6 +70,29 @@ class HourlyMetricChartTests(unittest.TestCase):
                 ["line", "point"],
             )
             self.assertNotIn("xOffset", str(plot))
+
+    def test_weight_comparison_uses_reference_target_and_percentage_label(self):
+        selected_cycles = self.cycles[:3]
+        chart = hourly_metric_chart(selected_cycles, self.data, "Peso", [])
+        spec = chart.to_dict()
+
+        mark_types = [layer["mark"]["type"] for layer in spec["layer"]]
+        self.assertEqual(
+            mark_types,
+            ["rule", "point", "point", "text", "text", "text", "text", "text"],
+        )
+        self.assertEqual(
+            spec["layer"][0]["encoding"]["x"]["field"],
+            "Peso de referência (kg)",
+        )
+        self.assertEqual(
+            spec["layer"][0]["encoding"]["x2"]["field"],
+            "Peso aos 7 °C (kg)",
+        )
+        self.assertFalse(spec["layer"][0]["encoding"]["x"]["scale"]["zero"])
+        self.assertIn("perda", str(spec).lower())
+        self.assertIn("Qualidade do peso", str(spec))
+        self.assertIn("Sem peso válido aos 7 °C", chart.to_json())
 
     def test_ventilation_uses_step_lines_and_cycle_markers(self):
         selected_cycles = self.cycles[:3]

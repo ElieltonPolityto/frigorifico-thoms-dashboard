@@ -13,6 +13,7 @@ from thoms_dashboard_data import (
     PHASE_TO_TARGET,
     Cycle,
     cycle_frame,
+    cycle_metrics,
     hourly_phase_summary,
     valid_weight_series,
     weight_loss_frame,
@@ -954,6 +955,230 @@ def _empty_main_chart(message: str) -> alt.Chart:
     )
 
 
+def weight_reference_target_chart(
+    selected_cycles: list[Cycle],
+    data: pd.DataFrame,
+) -> alt.TopLevelMixin:
+    """Compare the technical weight reference with the valid reading at 7 C."""
+    rows: list[dict[str, object]] = []
+    for index, cycle in enumerate(selected_cycles):
+        metrics = cycle_metrics(data, cycle)
+        reference_weight = metrics.get(
+            "Peso referencia",
+            metrics.get("Peso inicial"),
+        )
+        target_weight = metrics.get("Peso final")
+        loss_pct = metrics.get("Perda")
+        loss_kg = metrics.get("Perda absoluta")
+        suspect = bool(metrics.get("Peso suspeito"))
+
+        reference_label = (
+            "Sem peso de referência válido"
+            if reference_weight is None or pd.isna(reference_weight)
+            else f"Referência {float(reference_weight):.1f} kg".replace(".", ",")
+        )
+        target_label = "Sem peso válido aos 7 °C"
+        if target_weight is not None and not pd.isna(target_weight):
+            target_label = f"Aos 7 °C {float(target_weight):.1f} kg".replace(".", ",")
+            if loss_pct is not None and not pd.isna(loss_pct):
+                target_label += f" · perda {float(loss_pct):.2f}%".replace(".", ",")
+        if suspect:
+            target_label += " · peso suspeito"
+
+        rows.append(
+            {
+                "Ciclo": _cycle_name(index),
+                "Período": cycle.label,
+                "Peso de referência (kg)": reference_weight,
+                "Peso aos 7 °C (kg)": target_weight,
+                "Perda (kg)": loss_kg,
+                "Perda (%)": loss_pct,
+                "Referência": reference_label,
+                "Resultado": target_label,
+                "Qualidade do peso": "Suspeito" if suspect else "Sem anomalia detectada",
+            }
+        )
+
+    chart_data = pd.DataFrame(rows)
+    if chart_data.empty:
+        return _empty_main_chart("Não há ciclos selecionados para comparar o peso.")
+
+    reference_values = chart_data["Peso de referência (kg)"].dropna()
+    target_values = chart_data["Peso aos 7 °C (kg)"].dropna()
+    plotted_values = pd.concat([reference_values, target_values], ignore_index=True)
+    if plotted_values.empty:
+        return _empty_main_chart(
+            "Não há peso de referência ou peso válido aos 7 °C nos ciclos selecionados."
+        )
+
+    minimum = float(plotted_values.min())
+    maximum = float(plotted_values.max())
+    spread = maximum - minimum
+    padding = max(2.5, spread * 0.12)
+    domain = [minimum - padding, maximum + padding]
+    midpoint = (minimum + maximum) / 2
+    cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
+    color = alt.Color(
+        "Ciclo:N",
+        scale=alt.Scale(
+            domain=cycle_domain,
+            range=CYCLE_COLORS[: len(selected_cycles)],
+        ),
+        legend=None,
+    )
+    y = alt.Y(
+        "Ciclo:N",
+        sort=cycle_domain,
+        title=None,
+        axis=alt.Axis(
+            domain=False,
+            ticks=False,
+            labelColor="#142B51",
+            labelFontWeight=600,
+            labelPadding=10,
+        ),
+    )
+    tooltip = [
+        alt.Tooltip("Ciclo:N", title="Ciclo"),
+        alt.Tooltip("Período:N", title="Período"),
+        alt.Tooltip(
+            "Peso de referência (kg):Q",
+            title="Peso de referência (kg)",
+            format=".1f",
+        ),
+        alt.Tooltip(
+            "Peso aos 7 °C (kg):Q",
+            title="Peso aos 7 °C (kg)",
+            format=".1f",
+        ),
+        alt.Tooltip("Perda (kg):Q", title="Perda (kg)", format=".2f"),
+        alt.Tooltip("Perda (%):Q", title="Perda (%)", format=".2f"),
+        alt.Tooltip("Qualidade do peso:N", title="Qualidade"),
+    ]
+    x_reference = alt.X(
+        "Peso de referência (kg):Q",
+        title="Peso (kg) · escala ampliada",
+        scale=alt.Scale(domain=domain, zero=False, nice=False),
+        axis=alt.Axis(grid=True, tickCount=6),
+    )
+    x_target = alt.X(
+        "Peso aos 7 °C (kg):Q",
+        scale=alt.Scale(domain=domain, zero=False, nice=False),
+    )
+
+    paired = chart_data.dropna(
+        subset=["Peso de referência (kg)", "Peso aos 7 °C (kg)"]
+    )
+    references = chart_data.dropna(subset=["Peso de referência (kg)"])
+    targets = chart_data.dropna(subset=["Peso aos 7 °C (kg)"])
+    references_label_right = references[
+        references["Peso de referência (kg)"].le(midpoint)
+    ]
+    references_label_left = references[
+        references["Peso de referência (kg)"].gt(midpoint)
+    ]
+    targets_label_right = targets[targets["Peso aos 7 °C (kg)"].le(midpoint)]
+    targets_label_left = targets[targets["Peso aos 7 °C (kg)"].gt(midpoint)]
+    missing_target = chart_data[
+        chart_data["Peso de referência (kg)"].notna()
+        & chart_data["Peso aos 7 °C (kg)"].isna()
+    ]
+
+    connectors = (
+        alt.Chart(paired)
+        .mark_rule(strokeWidth=3.2, opacity=0.78)
+        .encode(
+            x=x_reference,
+            x2=alt.X2("Peso aos 7 °C (kg):Q"),
+            y=y,
+            color=color,
+            tooltip=tooltip,
+        )
+    )
+    reference_points = (
+        alt.Chart(references)
+        .mark_point(shape="circle", filled=True, size=115, stroke="white", strokeWidth=1.3)
+        .encode(x=x_reference, y=y, color=color, tooltip=tooltip)
+    )
+    target_points = (
+        alt.Chart(targets)
+        .mark_point(shape="diamond", filled=True, size=125, stroke="white", strokeWidth=1.3)
+        .encode(x=x_target, y=y, color=color, tooltip=tooltip)
+    )
+    reference_labels_right = (
+        alt.Chart(references_label_right)
+        .mark_text(
+            align="left",
+            baseline="bottom",
+            dx=8,
+            dy=-8,
+            color="#51606F",
+            fontSize=11,
+        )
+        .encode(x=x_reference, y=y, text="Referência:N", tooltip=tooltip)
+    )
+    reference_labels_left = (
+        alt.Chart(references_label_left)
+        .mark_text(
+            align="right",
+            baseline="bottom",
+            dx=-8,
+            dy=-8,
+            color="#51606F",
+            fontSize=11,
+        )
+        .encode(x=x_reference, y=y, text="Referência:N", tooltip=tooltip)
+    )
+    target_labels_right = (
+        alt.Chart(targets_label_right)
+        .mark_text(
+            align="left",
+            baseline="top",
+            dx=8,
+            dy=9,
+            fontSize=11,
+            fontWeight=600,
+        )
+        .encode(x=x_target, y=y, text="Resultado:N", color=color, tooltip=tooltip)
+    )
+    target_labels_left = (
+        alt.Chart(targets_label_left)
+        .mark_text(
+            align="right",
+            baseline="top",
+            dx=-8,
+            dy=9,
+            fontSize=11,
+            fontWeight=600,
+        )
+        .encode(x=x_target, y=y, text="Resultado:N", color=color, tooltip=tooltip)
+    )
+    missing_labels = (
+        alt.Chart(missing_target)
+        .mark_text(
+            align="left",
+            baseline="top",
+            dx=8,
+            dy=9,
+            color="#8A5A00",
+            fontSize=11,
+            fontWeight=600,
+        )
+        .encode(x=x_reference, y=y, text="Resultado:N", tooltip=tooltip)
+    )
+
+    return alt.layer(
+        connectors,
+        reference_points,
+        target_points,
+        reference_labels_right,
+        reference_labels_left,
+        target_labels_right,
+        target_labels_left,
+        missing_labels,
+    ).properties(width=850, height=max(150, len(selected_cycles) * 88))
+
+
 def hourly_metric_chart(
     selected_cycles: list[Cycle],
     data: pd.DataFrame,
@@ -961,6 +1186,9 @@ def hourly_metric_chart(
     selected_hours: list[str],
 ) -> alt.TopLevelMixin:
     """Render hourly phase comparisons with a form appropriate to each metric."""
+    if metric == "Peso":
+        return weight_reference_target_chart(selected_cycles, data)
+
     rows: list[pd.DataFrame] = []
     unit = ""
     for index, cycle in enumerate(selected_cycles):

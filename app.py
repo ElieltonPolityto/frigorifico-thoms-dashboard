@@ -41,7 +41,10 @@ COLORS = CYCLE_COLORS
 METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol", "Retorno de ar"]
 MAIN_METRIC_OPTIONS = ["Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso"]
 PDF_BAR_DEFAULTS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao"]
-DISPLAY_METRIC_NAMES = {"Umidade": "Umidade Relativa"}
+DISPLAY_METRIC_NAMES = {
+    "Peso": "Peso de referência e peso aos 7 °C",
+    "Umidade": "Umidade Relativa",
+}
 
 st.markdown(
     """
@@ -378,7 +381,7 @@ def main() -> None:
         ),
     )
     selected_bar_metrics = st.sidebar.multiselect(
-        "Variáveis na comparação horária",
+        "Variáveis na comparação",
         options=METRIC_OPTIONS,
         default=PDF_BAR_DEFAULTS,
         help="Cada variável selecionada aparece no resumo e em uma aba de comparação individual.",
@@ -449,13 +452,13 @@ def main() -> None:
         width="stretch",
     )
 
-    st.subheader("Médias horárias e dados de apoio")
+    st.subheader("Comparações por ciclo e dados de apoio")
     if not selected_bar_metrics:
-        st.info("Selecione pelo menos uma variável para exibir a comparação horária.")
+        st.info("Selecione pelo menos uma variável para exibir a comparação.")
     else:
         st.caption(
-            "Cada gráfico reúne carregamento e resfriamento até a meta no mesmo eixo. "
-            "O período pós-meta permanece disponível na tabela detalhada."
+            "As variáveis de processo são resumidas por hora da fase. O peso compara a "
+            "referência com a leitura válida no instante em que o espeto atinge 7 °C."
         )
         def render_hourly_metric(metric: str, *, show_heading: bool, show_detail: bool) -> None:
             display_name = DISPLAY_METRIC_NAMES.get(metric, metric)
@@ -470,25 +473,46 @@ def main() -> None:
                 ),
                 width="stretch",
             )
-            st.caption(
-                "Marcas semitransparentes representam horas parciais com menos de "
-                "45 minutos de cobertura. A matriz abaixo do eixo mostra os valores por ciclo; "
-                "o asterisco identifica uma hora parcial."
-            )
+            if metric == "Peso":
+                st.caption(
+                    "O círculo marca o peso de referência e o losango, o peso aos 7 °C. "
+                    "O rótulo final e o tooltip informam a perda percentual."
+                )
+            else:
+                st.caption(
+                    "Marcas semitransparentes representam horas parciais com menos de "
+                    "45 minutos de cobertura. A matriz abaixo do eixo mostra os valores por ciclo; "
+                    "o asterisco identifica uma hora parcial."
+                )
             if show_detail:
-                with st.expander("Ver tabela detalhada (inclui resfriamento pós-meta)"):
-                    render_html_table(
-                        explanatory_table_frame(
-                            selected_cycles,
-                            data,
-                            metric,
-                            selected_hours,
+                if metric == "Peso":
+                    with st.expander("Ver valores de peso e perda"):
+                        weight_columns = [
+                            "Ciclo",
+                            "Período",
+                            "Peso de referencia",
+                            "Peso aos 7 °C",
+                            "Perda absoluta",
+                            "Perda até 7 °C",
+                        ]
+                        render_html_table(
+                            cycle_summary_frame(selected_cycles, data)[weight_columns],
+                            period_column="Período",
                         )
-                    )
-                    st.caption(
-                        "Cada célula mostra a média horária, a unidade e a cobertura "
-                        "observada. Horas com menos de 45 minutos são marcadas como parciais."
-                    )
+                else:
+                    with st.expander("Ver tabela detalhada (inclui resfriamento pós-meta)"):
+                        render_html_table(
+                            explanatory_table_frame(
+                                selected_cycles,
+                                data,
+                                metric,
+                                selected_hours,
+                            )
+                        )
+                        st.caption(
+                            "Cada célula mostra a média horária, a unidade e a cobertura "
+                            "observada. Horas com menos de 45 minutos são marcadas como parciais."
+                        )
 
         tabs = st.tabs(
             ["Resumo"]
