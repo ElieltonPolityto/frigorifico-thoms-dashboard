@@ -9,22 +9,29 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from dashboard_charts import (
-    CYCLE_COLORS,
-    hourly_metric_chart,
-    main_cycle_chart,
-    weight_loss_comparison_chart,
-)
-from dashboard_pdf import build_dashboard_pdf
-from thoms_dashboard_data import (
-    PHASE_ORDER,
-    cycle_frame,
-    cycle_metrics,
-    detect_valid_cycles,
-    hourly_phase_summary,
-    load_supervision_data,
-    rank_cycles,
-)
+st.set_page_config(page_title="Thoms | Ciclos", page_icon="❄️", layout="wide")
+
+try:
+    from dashboard_charts import (
+        CYCLE_COLORS,
+        hourly_metric_chart,
+        main_cycle_chart,
+        weight_loss_comparison_chart,
+    )
+    from dashboard_pdf import build_dashboard_pdf
+    from thoms_dashboard_data import (
+        PHASE_ORDER,
+        cycle_frame,
+        cycle_metrics,
+        detect_valid_cycles,
+        hourly_phase_summary,
+        load_supervision_data,
+        rank_cycles,
+    )
+except Exception as startup_error:
+    st.error("Falha ao carregar os módulos do dashboard.")
+    st.exception(startup_error)
+    st.stop()
 
 
 DATA_FOLDER = Path(__file__).parent / "dados_entrada"
@@ -35,8 +42,6 @@ METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol",
 MAIN_METRIC_OPTIONS = ["Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso"]
 PDF_BAR_DEFAULTS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao"]
 DISPLAY_METRIC_NAMES = {"Umidade": "Umidade Relativa"}
-
-st.set_page_config(page_title="Thoms | Ciclos", page_icon="❄️", layout="wide")
 
 st.markdown(
     """
