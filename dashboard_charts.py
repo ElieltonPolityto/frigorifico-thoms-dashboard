@@ -823,12 +823,13 @@ def weight_loss_comparison_chart(
     data: pd.DataFrame,
     selected_hours: list[str],
 ) -> alt.TopLevelMixin:
-    """Compare minute-level absolute and percentage loss through 7 C."""
+    """Compare minute-level percentage loss through 7 C."""
     rows: list[pd.DataFrame] = []
     for index, cycle in enumerate(selected_cycles):
         frame = weight_loss_frame(data, cycle)
         frame = frame[frame["hour_label"].isin(selected_hours)].copy()
-        if frame["weight_kg"].notna().sum() == 0:
+        frame = frame[frame["loss_pct"].notna()].copy()
+        if frame.empty:
             continue
         frame["Ciclo"] = _cycle_name(index)
         frame["cycle_index"] = index
@@ -837,11 +838,21 @@ def weight_loss_comparison_chart(
         return _empty_main_chart("Nao ha perda de peso disponivel na janela selecionada.")
 
     chart_data = pd.concat(rows, ignore_index=True)
+    max_hour = float(chart_data["hours_from_cycle_start"].max())
+    max_loss = max(0.0, float(chart_data["loss_pct"].max()))
+    min_loss = min(0.0, float(chart_data["loss_pct"].min()))
+    loss_span = max(max_loss - min_loss, 0.1)
+    x_domain = [0.0, max_hour + max(0.5, max_hour * 0.03)]
+    y_domain = [
+        min_loss - loss_span * 0.08 if min_loss < 0 else 0.0,
+        max_loss + loss_span * 0.18,
+    ]
     cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
     x = alt.X(
         "hours_from_cycle_start:Q",
         title="Horas desde o inicio do ciclo",
         axis=alt.Axis(tickMinStep=1),
+        scale=alt.Scale(domain=x_domain, zero=True, nice=False),
     )
     color = alt.Color(
         "Ciclo:N",
@@ -870,33 +881,67 @@ def weight_loss_comparison_chart(
                 "loss_pct:Q",
                 title="Perda acumulada (%)",
                 axis=alt.Axis(titleColor="#142B51"),
-                scale=alt.Scale(zero=False, nice=True),
+                scale=alt.Scale(domain=y_domain, zero=True, nice=False),
             ),
             color=color,
             detail="Ciclo:N",
             tooltip=tooltip,
         )
     )
-    absolute = (
-        alt.Chart(chart_data)
-        .mark_line(strokeWidth=2.0, strokeDash=[6, 3])
+
+    target_data = chart_data[
+        chart_data["is_target"].fillna(False)
+        & chart_data["loss_kg"].notna()
+        & chart_data["loss_pct"].notna()
+    ].copy()
+    target_data["end_label"] = target_data.apply(
+        lambda row: (
+            f"{row['Ciclo']} · {row['loss_pct']:.2f}% ({row['loss_kg']:.2f} kg)"
+        ).replace(".", ","),
+        axis=1,
+    )
+    target_points = (
+        alt.Chart(target_data)
+        .mark_point(size=95, filled=True, stroke="white", strokeWidth=1.2)
         .encode(
             x=x,
-            y=alt.Y(
-                "loss_kg:Q",
-                title="Perda acumulada (kg)",
-                axis=alt.Axis(orient="right", titleColor="#6F4C9B"),
-                scale=alt.Scale(zero=False, nice=True),
-            ),
+            y=alt.Y("loss_pct:Q"),
             color=color,
-            detail="Ciclo:N",
             tooltip=tooltip,
         )
     )
+
+    label_layers: list[alt.Chart] = []
+    centered_offset = (len(selected_cycles) - 1) / 2
+    for index, cycle_name in enumerate(cycle_domain):
+        cycle_target = target_data[target_data["Ciclo"].eq(cycle_name)]
+        if cycle_target.empty:
+            continue
+        label_layers.append(
+            alt.Chart(cycle_target)
+            .mark_text(
+                align="right",
+                baseline="middle",
+                dx=-8,
+                dy=(
+                    -12
+                    if len(selected_cycles) == 1
+                    else int((index - centered_offset) * 18)
+                ),
+                fontSize=11,
+                fontWeight=500,
+            )
+            .encode(
+                x=x,
+                y=alt.Y("loss_pct:Q"),
+                text=alt.Text("end_label:N"),
+                color=alt.value(CYCLE_COLORS[index]),
+            )
+        )
+
     return (
-        alt.layer(zero, percentage, absolute)
+        alt.layer(zero, percentage, target_points, *label_layers)
         .properties(width=850, height=310)
-        .resolve_scale(y="independent")
     )
 
 

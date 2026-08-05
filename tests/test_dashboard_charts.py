@@ -191,7 +191,7 @@ class HourlyMetricChartTests(unittest.TestCase):
             "Peso medido até 7 °C (kg) · escala ampliada · sem peso válido no instante de 7 °C",
         )
 
-    def test_weight_loss_chart_combines_percentage_and_kg_in_one_panel(self):
+    def test_weight_loss_chart_uses_percentage_line_and_absolute_end_label(self):
         selected_cycles = self.cycles[:3]
         selected_hours = []
         for cycle in selected_cycles:
@@ -204,10 +204,25 @@ class HourlyMetricChartTests(unittest.TestCase):
         ).to_dict()
 
         self.assertNotIn("vconcat", spec)
-        self.assertEqual([layer["mark"]["type"] for layer in spec["layer"]], ["rule", "line", "line"])
+        mark_types = [layer["mark"]["type"] for layer in spec["layer"]]
+        self.assertEqual(mark_types.count("line"), 1)
+        self.assertEqual(mark_types.count("point"), 1)
+        self.assertIn("text", mark_types)
         self.assertEqual(spec["layer"][1]["encoding"]["y"]["title"], "Perda acumulada (%)")
-        self.assertEqual(spec["layer"][2]["encoding"]["y"]["title"], "Perda acumulada (kg)")
-        self.assertEqual(spec["layer"][2]["encoding"]["y"]["axis"]["orient"], "right")
+        self.assertTrue(spec["layer"][1]["encoding"]["y"]["scale"]["zero"])
+        self.assertNotIn("resolve", spec)
+        encoded_y_fields = {
+            layer["encoding"]["y"].get("field")
+            for layer in spec["layer"]
+            if "encoding" in layer and "y" in layer["encoding"]
+        }
+        self.assertNotIn("loss_kg", encoded_y_fields)
+        text_layers = [
+            layer for layer in spec["layer"] if layer["mark"]["type"] == "text"
+        ]
+        self.assertTrue(
+            all(layer["encoding"]["text"]["field"] == "end_label" for layer in text_layers)
+        )
 
     def test_main_weight_target_label_includes_percentage_loss(self):
         cycle = next(cycle for cycle in self.cycles if cycle.label.startswith("02/06/2026"))
