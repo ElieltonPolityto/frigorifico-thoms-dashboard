@@ -81,7 +81,7 @@ class HourlyMetricChartTests(unittest.TestCase):
         mark_types = [layer["mark"]["type"] for layer in plot["layer"]]
         self.assertEqual(
             mark_types,
-            ["line", "point", "point", "point", "point", "text"],
+            ["line", "point", "point", "point", "text", "point", "text"],
         )
         self.assertEqual(
             plot["layer"][0]["encoding"]["x"]["field"],
@@ -107,6 +107,16 @@ class HourlyMetricChartTests(unittest.TestCase):
             target_hover_layers,
             "O ponto final precisa de uma área de hover ampla com a perda percentual.",
         )
+        target_label_layers = [
+            layer
+            for layer in plot["layer"]
+            if layer["mark"]["type"] == "text"
+            and layer.get("encoding", {}).get("text", {}).get("field") == "target_label"
+        ]
+        self.assertTrue(
+            target_label_layers,
+            "A perda percentual precisa aparecer escrita junto ao ponto final.",
+        )
         self.assertEqual(
             [layer["mark"]["type"] for layer in spec["vconcat"][1]["layer"]],
             ["rect", "text"],
@@ -121,6 +131,13 @@ class HourlyMetricChartTests(unittest.TestCase):
         target_rows = [row for row in rows if row.get("is_target") is True]
         self.assertTrue(target_rows)
         self.assertTrue(any(abs(row["weight_kg"] - 121.8) < 1e-9 for row in target_rows))
+        self.assertTrue(
+            any(
+                "7 °C 121,8 kg" in row.get("target_label", "")
+                and "perda 1,69%" in row.get("target_label", "")
+                for row in rows
+            )
+        )
         self.assertIn("H0", chart.to_json())
 
     def test_ventilation_uses_step_lines_and_cycle_markers(self):

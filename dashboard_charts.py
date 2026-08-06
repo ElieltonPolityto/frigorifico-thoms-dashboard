@@ -1307,6 +1307,28 @@ def weight_reference_target_chart(
         alt.Tooltip("time_to_target_h:Q", title="Tempo até 7 °C (h)", format=".2f"),
         alt.Tooltip("quality:N", title="Qualidade"),
     ]
+    target_data = chart_data[
+        chart_data["is_target"]
+        & chart_data["target_weight_kg"].notna()
+        & chart_data["loss_pct"].notna()
+    ].copy()
+    if len(selected_cycles) == 1:
+        target_data["target_label"] = target_data.apply(
+            lambda row: (
+                f"Inicial {row['reference_weight_kg']:.1f} kg → "
+                f"7 °C {row['target_weight_kg']:.1f} kg · "
+                f"perda {row['loss_pct']:.2f}%"
+            ).replace(".", ","),
+            axis=1,
+        )
+    else:
+        target_data["target_label"] = target_data.apply(
+            lambda row: (
+                f"{row['Ciclo curto']} · {row['reference_weight_kg']:.1f} → "
+                f"{row['target_weight_kg']:.1f} kg · perda {row['loss_pct']:.2f}%"
+            ).replace(".", ","),
+            axis=1,
+        )
 
     line = (
         alt.Chart(chart_data)
@@ -1337,12 +1359,30 @@ def weight_reference_target_chart(
         .encode(x=x, y=y, color=color, tooltip=point_tooltip)
     )
     target_points = (
-        alt.Chart(chart_data[chart_data["is_target"]])
+        alt.Chart(target_data)
         .mark_point(shape="diamond", filled=True, size=145, stroke="white", strokeWidth=1.3)
         .encode(x=x, y=y, color=color, tooltip=target_tooltip)
     )
+    target_labels = (
+        alt.Chart(target_data)
+        .mark_text(
+            align="right",
+            baseline="bottom",
+            dx=-12,
+            dy=-10,
+            fontSize=11,
+            fontWeight=600,
+        )
+        .encode(
+            x=x,
+            y=y,
+            color=color,
+            text="target_label:N",
+            tooltip=target_tooltip,
+        )
+    )
     target_hover_points = (
-        alt.Chart(chart_data[chart_data["is_target"]])
+        alt.Chart(target_data)
         .mark_point(size=900, opacity=0)
         .encode(x=x, y=y, tooltip=target_tooltip)
     )
@@ -1351,9 +1391,9 @@ def weight_reference_target_chart(
         alt.Chart(status_points)
         .mark_text(
             align="right",
-            baseline="bottom",
+            baseline="top",
             dx=-8,
-            dy=-8,
+            dy=10,
             color="#8A5A00",
             fontSize=11,
             fontWeight=600,
@@ -1365,6 +1405,7 @@ def weight_reference_target_chart(
         regular_points,
         reference_points,
         target_points,
+        target_labels,
         target_hover_points,
         status_labels,
     ).properties(width=panel_width, height=260)
