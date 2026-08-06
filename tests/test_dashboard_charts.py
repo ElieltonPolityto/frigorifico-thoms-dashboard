@@ -81,7 +81,7 @@ class HourlyMetricChartTests(unittest.TestCase):
         mark_types = [layer["mark"]["type"] for layer in plot["layer"]]
         self.assertEqual(
             mark_types,
-            ["line", "point", "point", "point", "text"],
+            ["line", "point", "point", "point", "point", "text"],
         )
         self.assertEqual(
             plot["layer"][0]["encoding"]["x"]["field"],
@@ -95,6 +95,18 @@ class HourlyMetricChartTests(unittest.TestCase):
         target_tooltip = plot["layer"][3]["encoding"]["tooltip"]
         self.assertIn("Peso inicial de referência (kg)", str(target_tooltip))
         self.assertIn("Perda (%)", str(target_tooltip))
+        target_hover_layers = [
+            layer
+            for layer in plot["layer"]
+            if layer["mark"]["type"] == "point"
+            and layer["mark"].get("opacity") == 0
+            and layer["mark"].get("size", 0) >= 700
+            and "Perda (%)" in str(layer.get("encoding", {}).get("tooltip", []))
+        ]
+        self.assertTrue(
+            target_hover_layers,
+            "O ponto final precisa de uma área de hover ampla com a perda percentual.",
+        )
         self.assertEqual(
             [layer["mark"]["type"] for layer in spec["vconcat"][1]["layer"]],
             ["rect", "text"],

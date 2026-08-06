@@ -1341,6 +1341,11 @@ def weight_reference_target_chart(
         .mark_point(shape="diamond", filled=True, size=145, stroke="white", strokeWidth=1.3)
         .encode(x=x, y=y, color=color, tooltip=target_tooltip)
     )
+    target_hover_points = (
+        alt.Chart(chart_data[chart_data["is_target"]])
+        .mark_point(size=900, opacity=0)
+        .encode(x=x, y=y, tooltip=target_tooltip)
+    )
     status_points = chart_data[chart_data["status_label"].ne("")]
     status_labels = (
         alt.Chart(status_points)
@@ -1360,6 +1365,7 @@ def weight_reference_target_chart(
         regular_points,
         reference_points,
         target_points,
+        target_hover_points,
         status_labels,
     ).properties(width=panel_width, height=260)
     matrix = _hourly_weight_matrix(

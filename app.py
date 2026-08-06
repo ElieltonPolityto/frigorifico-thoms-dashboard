@@ -476,8 +476,8 @@ def main() -> None:
             if metric == "Peso":
                 st.caption(
                     "H0 é o peso de referência; os demais pontos usam a última leitura válida "
-                    "de cada hora. O losango marca 7 °C e seu tooltip informa os pesos inicial "
-                    "e final, a perda em kg e em percentual. * indica hora parcial."
+                    "de cada hora. Passe o mouse sobre o losango de 7 °C para ver os pesos "
+                    "inicial e final, a perda em kg e em percentual. * indica hora parcial."
                 )
             else:
                 st.caption(
