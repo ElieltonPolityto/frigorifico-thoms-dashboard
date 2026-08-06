@@ -366,7 +366,7 @@ def build_dashboard_pdf(
     for metric in bar_metrics:
         story.append(PageBreak())
         metric_title = (
-            "Peso de referência e peso aos 7 °C"
+            "Peso absoluto por hora até 7 °C"
             if metric == "Peso"
             else f"{metric} - médias horárias do carregamento ao resfriamento até a meta"
         )

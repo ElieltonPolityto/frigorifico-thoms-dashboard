@@ -42,7 +42,7 @@ METRIC_OPTIONS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao", "Glicol",
 MAIN_METRIC_OPTIONS = ["Retorno de ar", "Espeto", "Ventilacao", "Umidade", "Peso"]
 PDF_BAR_DEFAULTS = ["Espeto", "Peso", "DT_ref", "Umidade", "Ventilacao"]
 DISPLAY_METRIC_NAMES = {
-    "Peso": "Peso de referência e peso aos 7 °C",
+    "Peso": "Peso absoluto por hora até 7 °C",
     "Umidade": "Umidade Relativa",
 }
 
@@ -457,8 +457,8 @@ def main() -> None:
         st.info("Selecione pelo menos uma variável para exibir a comparação.")
     else:
         st.caption(
-            "As variáveis de processo são resumidas por hora da fase. O peso compara a "
-            "referência com a leitura válida no instante em que o espeto atinge 7 °C."
+            "As variáveis de processo são resumidas por hora da fase. O peso acompanha "
+            "as leituras horárias desde a referência até o instante de 7 °C."
         )
         def render_hourly_metric(metric: str, *, show_heading: bool, show_detail: bool) -> None:
             display_name = DISPLAY_METRIC_NAMES.get(metric, metric)
@@ -475,8 +475,9 @@ def main() -> None:
             )
             if metric == "Peso":
                 st.caption(
-                    "O círculo marca o peso de referência e o losango, o peso aos 7 °C. "
-                    "O rótulo final e o tooltip informam a perda percentual."
+                    "H0 é o peso de referência; os demais pontos usam a última leitura válida "
+                    "de cada hora. O losango marca 7 °C e seu tooltip informa os pesos inicial "
+                    "e final, a perda em kg e em percentual. * indica hora parcial."
                 )
             else:
                 st.caption(

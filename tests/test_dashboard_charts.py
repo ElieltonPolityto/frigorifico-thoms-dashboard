@@ -71,28 +71,45 @@ class HourlyMetricChartTests(unittest.TestCase):
             )
             self.assertNotIn("xOffset", str(plot))
 
-    def test_weight_comparison_uses_reference_target_and_percentage_label(self):
-        selected_cycles = self.cycles[:3]
-        chart = hourly_metric_chart(selected_cycles, self.data, "Peso", [])
+    def test_weight_comparison_uses_absolute_hourly_weight_and_target_tooltip(self):
+        cycle = next(cycle for cycle in self.cycles if cycle.label.startswith("02/06/2026"))
+        chart = hourly_metric_chart([cycle], self.data, "Peso", [])
         spec = chart.to_dict()
 
-        mark_types = [layer["mark"]["type"] for layer in spec["layer"]]
+        self.assertEqual(len(spec["vconcat"]), 2)
+        plot = spec["vconcat"][0]
+        mark_types = [layer["mark"]["type"] for layer in plot["layer"]]
         self.assertEqual(
             mark_types,
-            ["rule", "point", "point", "text", "text", "text", "text", "text"],
+            ["line", "point", "point", "point", "text"],
         )
         self.assertEqual(
-            spec["layer"][0]["encoding"]["x"]["field"],
-            "Peso de referência (kg)",
+            plot["layer"][0]["encoding"]["x"]["field"],
+            "hours_since_reference",
         )
         self.assertEqual(
-            spec["layer"][0]["encoding"]["x2"]["field"],
-            "Peso aos 7 °C (kg)",
+            plot["layer"][0]["encoding"]["y"]["field"],
+            "weight_kg",
         )
-        self.assertFalse(spec["layer"][0]["encoding"]["x"]["scale"]["zero"])
-        self.assertIn("perda", str(spec).lower())
-        self.assertIn("Qualidade do peso", str(spec))
-        self.assertIn("Sem peso válido aos 7 °C", chart.to_json())
+        self.assertFalse(plot["layer"][0]["encoding"]["y"]["scale"]["zero"])
+        target_tooltip = plot["layer"][3]["encoding"]["tooltip"]
+        self.assertIn("Peso inicial de referência (kg)", str(target_tooltip))
+        self.assertIn("Perda (%)", str(target_tooltip))
+        self.assertEqual(
+            [layer["mark"]["type"] for layer in spec["vconcat"][1]["layer"]],
+            ["rect", "text"],
+        )
+
+        rows = [
+            row
+            for dataset in spec["datasets"].values()
+            for row in dataset
+            if isinstance(row, dict)
+        ]
+        target_rows = [row for row in rows if row.get("is_target") is True]
+        self.assertTrue(target_rows)
+        self.assertTrue(any(abs(row["weight_kg"] - 121.8) < 1e-9 for row in target_rows))
+        self.assertIn("H0", chart.to_json())
 
     def test_ventilation_uses_step_lines_and_cycle_markers(self):
         selected_cycles = self.cycles[:3]

@@ -955,228 +955,420 @@ def _empty_main_chart(message: str) -> alt.Chart:
     )
 
 
-def weight_reference_target_chart(
+def _hourly_absolute_weight_rows(
     selected_cycles: list[Cycle],
     data: pd.DataFrame,
-) -> alt.TopLevelMixin:
-    """Compare the technical weight reference with the valid reading at 7 C."""
+) -> pd.DataFrame:
+    """Sample the last valid weight of each hour from the technical reference."""
     rows: list[dict[str, object]] = []
     for index, cycle in enumerate(selected_cycles):
         metrics = cycle_metrics(data, cycle)
+        reference_time = metrics.get("Hora referencia peso")
         reference_weight = metrics.get(
             "Peso referencia",
             metrics.get("Peso inicial"),
         )
-        target_weight = metrics.get("Peso final")
-        loss_pct = metrics.get("Perda")
-        loss_kg = metrics.get("Perda absoluta")
-        suspect = bool(metrics.get("Peso suspeito"))
+        if (
+            reference_time is None
+            or pd.isna(reference_time)
+            or reference_weight is None
+            or pd.isna(reference_weight)
+        ):
+            continue
 
-        reference_label = (
-            "Sem peso de referência válido"
-            if reference_weight is None or pd.isna(reference_weight)
-            else f"Referência {float(reference_weight):.1f} kg".replace(".", ",")
+        cycle_data = data.iloc[cycle.start_index : cycle.end_index + 1].copy()
+        valid_weight = valid_weight_series(cycle_data)
+        loss_frame = weight_loss_frame(data, cycle)
+        target_rows = loss_frame[loss_frame["is_target"]]
+        target_time = (
+            pd.Timestamp(target_rows["timestamp"].iloc[0])
+            if not target_rows.empty
+            else None
         )
-        target_label = "Sem peso válido aos 7 °C"
-        if target_weight is not None and not pd.isna(target_weight):
-            target_label = f"Aos 7 °C {float(target_weight):.1f} kg".replace(".", ",")
-            if loss_pct is not None and not pd.isna(loss_pct):
-                target_label += f" · perda {float(loss_pct):.2f}%".replace(".", ",")
-        if suspect:
-            target_label += " · peso suspeito"
+        end_time = (
+            target_time
+            if target_time is not None
+            else pd.Timestamp(cycle_data["timestamp"].iloc[-1])
+        )
+        reference_time = pd.Timestamp(reference_time)
+        end_hours = max(0.0, (end_time - reference_time).total_seconds() / 3600)
+        suspect = bool(metrics.get("Peso suspeito"))
+        target_weight = metrics.get("Peso final")
+        loss_kg = metrics.get("Perda absoluta")
+        loss_pct = metrics.get("Perda")
+        time_to_target = metrics.get("Tempo ate 7 C")
+        cycle_name = _cycle_name(index)
+        cycle_short = f"C{index + 1}"
+        quality = "Suspeito" if suspect else "Sem anomalia detectada"
 
+        common = {
+            "Ciclo": cycle_name,
+            "Ciclo curto": cycle_short,
+            "Período": cycle.label,
+            "reference_weight_kg": float(reference_weight),
+            "target_weight_kg": target_weight,
+            "loss_kg": loss_kg,
+            "loss_pct": loss_pct,
+            "time_to_target_h": (
+                float(time_to_target)
+                if isinstance(time_to_target, (int, float))
+                else None
+            ),
+            "quality": quality,
+        }
         rows.append(
             {
-                "Ciclo": _cycle_name(index),
-                "Período": cycle.label,
-                "Peso de referência (kg)": reference_weight,
-                "Peso aos 7 °C (kg)": target_weight,
-                "Perda (kg)": loss_kg,
-                "Perda (%)": loss_pct,
-                "Referência": reference_label,
-                "Resultado": target_label,
-                "Qualidade do peso": "Suspeito" if suspect else "Sem anomalia detectada",
+                **common,
+                "hour_index": 0,
+                "hour_label": "H0",
+                "hours_since_reference": 0.0,
+                "weight_kg": float(reference_weight),
+                "coverage_minutes": None,
+                "partial": False,
+                "is_reference": True,
+                "is_target": bool(target_time == reference_time),
+                "point_type": "Peso de referência",
+                "status_label": "",
             }
         )
 
-    chart_data = pd.DataFrame(rows)
-    if chart_data.empty:
-        return _empty_main_chart("Não há ciclos selecionados para comparar o peso.")
-
-    reference_values = chart_data["Peso de referência (kg)"].dropna()
-    target_values = chart_data["Peso aos 7 °C (kg)"].dropna()
-    plotted_values = pd.concat([reference_values, target_values], ignore_index=True)
-    if plotted_values.empty:
-        return _empty_main_chart(
-            "Não há peso de referência ou peso válido aos 7 °C nos ciclos selecionados."
+        valid_window = cycle_data.loc[
+            cycle_data["timestamp"].between(reference_time, end_time),
+            ["timestamp"],
+        ].copy()
+        valid_window["weight_kg"] = valid_weight.loc[valid_window.index]
+        valid_window = valid_window.dropna(subset=["weight_kg"])
+        cadence = valid_window["timestamp"].diff().dropna().median()
+        cadence_minutes = (
+            cadence.total_seconds() / 60
+            if pd.notna(cadence) and cadence > pd.Timedelta(0)
+            else 1.0
         )
 
-    minimum = float(plotted_values.min())
-    maximum = float(plotted_values.max())
-    spread = maximum - minimum
-    padding = max(2.5, spread * 0.12)
-    domain = [minimum - padding, maximum + padding]
-    midpoint = (minimum + maximum) / 2
-    cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
-    color = alt.Color(
-        "Ciclo:N",
-        scale=alt.Scale(
-            domain=cycle_domain,
-            range=CYCLE_COLORS[: len(selected_cycles)],
+        completed_hours = int(math.floor(end_hours + 1e-9))
+        for hour_index in range(1, completed_hours + 1):
+            interval_start = reference_time + pd.Timedelta(hours=hour_index - 1)
+            interval_end = min(
+                reference_time + pd.Timedelta(hours=hour_index),
+                end_time,
+            )
+            hour_data = valid_window[
+                valid_window["timestamp"].gt(interval_start)
+                & valid_window["timestamp"].le(interval_end)
+            ]
+            if hour_data.empty:
+                rows.append(
+                    {
+                        **common,
+                        "hour_index": hour_index,
+                        "hour_label": f"H{hour_index}",
+                        "hours_since_reference": float(hour_index),
+                        "weight_kg": None,
+                        "coverage_minutes": 0.0,
+                        "partial": True,
+                        "is_reference": False,
+                        "is_target": False,
+                        "point_type": "Sem leitura válida",
+                        "status_label": "",
+                    }
+                )
+                continue
+
+            selected = hour_data.iloc[-1]
+            observed_span = (
+                hour_data["timestamp"].max() - hour_data["timestamp"].min()
+            ).total_seconds() / 60
+            coverage_minutes = min(60.0, observed_span + cadence_minutes)
+            is_target = bool(target_time is not None and selected["timestamp"] == target_time)
+            rows.append(
+                {
+                    **common,
+                    "hour_index": hour_index,
+                    "hour_label": f"H{hour_index}",
+                    "hours_since_reference": float(hour_index),
+                    "weight_kg": float(selected["weight_kg"]),
+                    "coverage_minutes": coverage_minutes,
+                    "partial": coverage_minutes < 45,
+                    "is_reference": False,
+                    "is_target": is_target,
+                    "point_type": "Peso aos 7 °C" if is_target else "Fim da hora",
+                    "status_label": "",
+                }
+            )
+
+        has_partial_end = end_hours - completed_hours > 1e-6
+        if has_partial_end:
+            interval_start = reference_time + pd.Timedelta(hours=completed_hours)
+            partial_data = valid_window[
+                valid_window["timestamp"].gt(interval_start)
+                & valid_window["timestamp"].le(end_time)
+            ]
+            hour_index = completed_hours + 1
+            if not partial_data.empty:
+                selected = partial_data.iloc[-1]
+                observed_span = (
+                    partial_data["timestamp"].max() - partial_data["timestamp"].min()
+                ).total_seconds() / 60
+                coverage_minutes = min(60.0, observed_span + cadence_minutes)
+                is_target = bool(
+                    target_time is not None and selected["timestamp"] == target_time
+                )
+                rows.append(
+                    {
+                        **common,
+                        "hour_index": hour_index,
+                        "hour_label": f"H{hour_index}",
+                        "hours_since_reference": (
+                            selected["timestamp"] - reference_time
+                        ).total_seconds()
+                        / 3600,
+                        "weight_kg": float(selected["weight_kg"]),
+                        "coverage_minutes": coverage_minutes,
+                        "partial": True,
+                        "is_reference": False,
+                        "is_target": is_target,
+                        "point_type": (
+                            "Peso aos 7 °C"
+                            if is_target
+                            else "Última leitura válida da hora parcial"
+                        ),
+                        "status_label": "",
+                    }
+                )
+
+        cycle_rows = [row for row in rows if row["Ciclo"] == cycle_name]
+        valid_cycle_rows = [row for row in cycle_rows if row["weight_kg"] is not None]
+        if valid_cycle_rows and not any(row["is_target"] for row in cycle_rows):
+            valid_cycle_rows[-1]["status_label"] = (
+                "Sem peso válido aos 7 °C"
+                if target_time is not None
+                else "Meta de 7 °C não atingida"
+            )
+
+    return pd.DataFrame(rows)
+
+
+def _hourly_weight_matrix(
+    chart_data: pd.DataFrame,
+    *,
+    hour_order: list[int],
+    cycle_short_domain: list[str],
+    width: int,
+) -> alt.LayerChart:
+    """Render exact hourly weights below the absolute-weight trend."""
+    grid = pd.MultiIndex.from_product(
+        [cycle_short_domain, hour_order],
+        names=["Ciclo curto", "hour_index"],
+    ).to_frame(index=False)
+    matrix_columns = [
+        "Ciclo curto",
+        "hour_index",
+        "weight_kg",
+        "coverage_minutes",
+        "partial",
+        "is_target",
+        "point_type",
+    ]
+    matrix_data = grid.merge(
+        chart_data[matrix_columns],
+        on=["Ciclo curto", "hour_index"],
+        how="left",
+    )
+    matrix_data["hour_label"] = "H" + matrix_data["hour_index"].astype(str)
+    matrix_data["partial"] = matrix_data["partial"].astype("boolean").fillna(False)
+    matrix_data["value_label"] = matrix_data["weight_kg"].map(
+        lambda value: "" if pd.isna(value) else f"{value:.1f}"
+    )
+    matrix_data.loc[matrix_data["partial"] & matrix_data["weight_kg"].notna(), "value_label"] += "*"
+
+    x = alt.X(
+        "hour_index:O",
+        sort=hour_order,
+        title=None,
+        axis=alt.Axis(
+            labelAngle=0,
+            labelExpr="'H' + datum.label",
+            labelPadding=8,
         ),
-        legend=None,
     )
     y = alt.Y(
-        "Ciclo:N",
-        sort=cycle_domain,
+        "Ciclo curto:N",
+        sort=cycle_short_domain,
         title=None,
         axis=alt.Axis(
             domain=False,
             ticks=False,
             labelColor="#142B51",
             labelFontWeight=600,
-            labelPadding=10,
+            labelPadding=8,
         ),
     )
     tooltip = [
-        alt.Tooltip("Ciclo:N", title="Ciclo"),
-        alt.Tooltip("Período:N", title="Período"),
-        alt.Tooltip(
-            "Peso de referência (kg):Q",
-            title="Peso de referência (kg)",
-            format=".1f",
-        ),
-        alt.Tooltip(
-            "Peso aos 7 °C (kg):Q",
-            title="Peso aos 7 °C (kg)",
-            format=".1f",
-        ),
-        alt.Tooltip("Perda (kg):Q", title="Perda (kg)", format=".2f"),
-        alt.Tooltip("Perda (%):Q", title="Perda (%)", format=".2f"),
-        alt.Tooltip("Qualidade do peso:N", title="Qualidade"),
+        alt.Tooltip("Ciclo curto:N", title="Ciclo"),
+        alt.Tooltip("hour_label:N", title="Hora"),
+        alt.Tooltip("weight_kg:Q", title="Peso (kg)", format=".1f"),
+        alt.Tooltip("point_type:N", title="Leitura"),
+        alt.Tooltip("coverage_minutes:Q", title="Cobertura (min)", format=".0f"),
     ]
-    x_reference = alt.X(
-        "Peso de referência (kg):Q",
-        title="Peso (kg) · escala ampliada",
-        scale=alt.Scale(domain=domain, zero=False, nice=False),
-        axis=alt.Axis(grid=True, tickCount=6),
-    )
-    x_target = alt.X(
-        "Peso aos 7 °C (kg):Q",
-        scale=alt.Scale(domain=domain, zero=False, nice=False),
-    )
-
-    paired = chart_data.dropna(
-        subset=["Peso de referência (kg)", "Peso aos 7 °C (kg)"]
-    )
-    references = chart_data.dropna(subset=["Peso de referência (kg)"])
-    targets = chart_data.dropna(subset=["Peso aos 7 °C (kg)"])
-    references_label_right = references[
-        references["Peso de referência (kg)"].le(midpoint)
-    ]
-    references_label_left = references[
-        references["Peso de referência (kg)"].gt(midpoint)
-    ]
-    targets_label_right = targets[targets["Peso aos 7 °C (kg)"].le(midpoint)]
-    targets_label_left = targets[targets["Peso aos 7 °C (kg)"].gt(midpoint)]
-    missing_target = chart_data[
-        chart_data["Peso de referência (kg)"].notna()
-        & chart_data["Peso aos 7 °C (kg)"].isna()
-    ]
-
-    connectors = (
-        alt.Chart(paired)
-        .mark_rule(strokeWidth=3.2, opacity=0.78)
+    cells = alt.Chart(matrix_data).mark_rect(
+        fill="#F7FAFC",
+        stroke="#D9E3EE",
+    ).encode(x=x, y=y)
+    values = (
+        alt.Chart(matrix_data)
+        .mark_text(color="#263238", fontSize=10, fontWeight=500)
         .encode(
-            x=x_reference,
-            x2=alt.X2("Peso aos 7 °C (kg):Q"),
+            x=x,
             y=y,
-            color=color,
+            text="value_label:N",
+            opacity=alt.condition(alt.datum.partial, alt.value(0.55), alt.value(0.95)),
             tooltip=tooltip,
         )
     )
+    return (cells + values).properties(
+        width=width,
+        height=max(28, len(cycle_short_domain) * 24),
+    )
+
+
+def weight_reference_target_chart(
+    selected_cycles: list[Cycle],
+    data: pd.DataFrame,
+) -> alt.TopLevelMixin:
+    """Show absolute hourly weight from the technical reference through 7 C."""
+    chart_data = _hourly_absolute_weight_rows(selected_cycles, data)
+    if chart_data.empty or chart_data["weight_kg"].dropna().empty:
+        return _empty_main_chart(
+            "Não há peso de referência válido nos ciclos selecionados."
+        )
+
+    cycle_domain = [_cycle_name(index) for index in range(len(selected_cycles))]
+    cycle_short_domain = [f"C{index + 1}" for index in range(len(selected_cycles))]
+    hour_order = list(range(int(chart_data["hour_index"].max()) + 1))
+    minimum = float(chart_data["weight_kg"].min())
+    maximum = float(chart_data["weight_kg"].max())
+    spread = maximum - minimum
+    padding = max(2.5, spread * 0.12)
+    weight_domain = [minimum - padding, maximum + padding]
+    panel_width = max(560, min(880, len(hour_order) * 52))
+
+    color = alt.Color(
+        "Ciclo:N",
+        scale=alt.Scale(
+            domain=cycle_domain,
+            range=CYCLE_COLORS[: len(selected_cycles)],
+        ),
+        legend=alt.Legend(orient="top", title=None),
+    )
+    stroke_dash = alt.StrokeDash(
+        "Ciclo:N",
+        scale=alt.Scale(
+            domain=cycle_domain,
+            range=CYCLE_DASHES[: len(selected_cycles)],
+        ),
+        legend=None,
+    )
+    shape = alt.Shape(
+        "Ciclo:N",
+        scale=alt.Scale(
+            domain=cycle_domain,
+            range=CYCLE_SHAPES[: len(selected_cycles)],
+        ),
+        legend=None,
+    )
+    x = alt.X(
+        "hours_since_reference:Q",
+        title="Horas desde o peso de referência",
+        scale=alt.Scale(domain=[0, max(chart_data["hours_since_reference"].max(), 1)]),
+        axis=alt.Axis(tickMinStep=1, grid=True),
+    )
+    y = alt.Y(
+        "weight_kg:Q",
+        title="Peso (kg) · escala ampliada",
+        scale=alt.Scale(domain=weight_domain, zero=False, nice=False),
+        axis=alt.Axis(tickCount=6),
+    )
+    point_tooltip = [
+        alt.Tooltip("Ciclo:N", title="Ciclo"),
+        alt.Tooltip("Período:N", title="Período"),
+        alt.Tooltip("hours_since_reference:Q", title="Horas desde a referência", format=".2f"),
+        alt.Tooltip("weight_kg:Q", title="Peso (kg)", format=".1f"),
+        alt.Tooltip("point_type:N", title="Leitura"),
+        alt.Tooltip("coverage_minutes:Q", title="Cobertura (min)", format=".0f"),
+        alt.Tooltip("quality:N", title="Qualidade"),
+    ]
+    target_tooltip = [
+        alt.Tooltip("Ciclo:N", title="Ciclo"),
+        alt.Tooltip("Período:N", title="Período"),
+        alt.Tooltip("reference_weight_kg:Q", title="Peso inicial de referência (kg)", format=".1f"),
+        alt.Tooltip("target_weight_kg:Q", title="Peso aos 7 °C (kg)", format=".1f"),
+        alt.Tooltip("loss_kg:Q", title="Perda (kg)", format=".2f"),
+        alt.Tooltip("loss_pct:Q", title="Perda (%)", format=".2f"),
+        alt.Tooltip("time_to_target_h:Q", title="Tempo até 7 °C (h)", format=".2f"),
+        alt.Tooltip("quality:N", title="Qualidade"),
+    ]
+
+    line = (
+        alt.Chart(chart_data)
+        .mark_line(strokeWidth=2.6)
+        .encode(
+            x=x,
+            y=y,
+            color=color,
+            strokeDash=stroke_dash,
+            detail="Ciclo:N",
+            order="hours_since_reference:Q",
+        )
+    )
+    regular_points = (
+        alt.Chart(chart_data[~chart_data["is_reference"] & ~chart_data["is_target"]])
+        .mark_point(filled=True, size=60, strokeWidth=1.2)
+        .encode(
+            x=x,
+            y=y,
+            color=color,
+            shape=shape,
+            tooltip=point_tooltip,
+        )
+    )
     reference_points = (
-        alt.Chart(references)
-        .mark_point(shape="circle", filled=True, size=115, stroke="white", strokeWidth=1.3)
-        .encode(x=x_reference, y=y, color=color, tooltip=tooltip)
+        alt.Chart(chart_data[chart_data["is_reference"]])
+        .mark_point(shape="circle", filled=True, size=105, stroke="white", strokeWidth=1.3)
+        .encode(x=x, y=y, color=color, tooltip=point_tooltip)
     )
     target_points = (
-        alt.Chart(targets)
-        .mark_point(shape="diamond", filled=True, size=125, stroke="white", strokeWidth=1.3)
-        .encode(x=x_target, y=y, color=color, tooltip=tooltip)
+        alt.Chart(chart_data[chart_data["is_target"]])
+        .mark_point(shape="diamond", filled=True, size=145, stroke="white", strokeWidth=1.3)
+        .encode(x=x, y=y, color=color, tooltip=target_tooltip)
     )
-    reference_labels_right = (
-        alt.Chart(references_label_right)
-        .mark_text(
-            align="left",
-            baseline="bottom",
-            dx=8,
-            dy=-8,
-            color="#51606F",
-            fontSize=11,
-        )
-        .encode(x=x_reference, y=y, text="Referência:N", tooltip=tooltip)
-    )
-    reference_labels_left = (
-        alt.Chart(references_label_left)
+    status_points = chart_data[chart_data["status_label"].ne("")]
+    status_labels = (
+        alt.Chart(status_points)
         .mark_text(
             align="right",
             baseline="bottom",
             dx=-8,
             dy=-8,
-            color="#51606F",
-            fontSize=11,
-        )
-        .encode(x=x_reference, y=y, text="Referência:N", tooltip=tooltip)
-    )
-    target_labels_right = (
-        alt.Chart(targets_label_right)
-        .mark_text(
-            align="left",
-            baseline="top",
-            dx=8,
-            dy=9,
-            fontSize=11,
-            fontWeight=600,
-        )
-        .encode(x=x_target, y=y, text="Resultado:N", color=color, tooltip=tooltip)
-    )
-    target_labels_left = (
-        alt.Chart(targets_label_left)
-        .mark_text(
-            align="right",
-            baseline="top",
-            dx=-8,
-            dy=9,
-            fontSize=11,
-            fontWeight=600,
-        )
-        .encode(x=x_target, y=y, text="Resultado:N", color=color, tooltip=tooltip)
-    )
-    missing_labels = (
-        alt.Chart(missing_target)
-        .mark_text(
-            align="left",
-            baseline="top",
-            dx=8,
-            dy=9,
             color="#8A5A00",
             fontSize=11,
             fontWeight=600,
         )
-        .encode(x=x_reference, y=y, text="Resultado:N", tooltip=tooltip)
+        .encode(x=x, y=y, text="status_label:N", tooltip=point_tooltip)
     )
-
-    return alt.layer(
-        connectors,
+    plot = alt.layer(
+        line,
+        regular_points,
         reference_points,
         target_points,
-        reference_labels_right,
-        reference_labels_left,
-        target_labels_right,
-        target_labels_left,
-        missing_labels,
-    ).properties(width=850, height=max(150, len(selected_cycles) * 88))
+        status_labels,
+    ).properties(width=panel_width, height=260)
+    matrix = _hourly_weight_matrix(
+        chart_data,
+        hour_order=hour_order,
+        cycle_short_domain=cycle_short_domain,
+        width=panel_width,
+    )
+    return alt.vconcat(plot, matrix, spacing=4).resolve_scale(x="independent")
 
 
 def hourly_metric_chart(
